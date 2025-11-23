@@ -37,5 +37,23 @@ Master Design Document.
 - **DEC-08** – No local shell scripts; only standalone commands.
 - **DEC-09** – Strict alignment with the corporate Git/GitHub guide.
 
+## Implementation status (release 0.2.0 – F2 Backend Skeleton)
+
+At this stage:
+
+- The backend is bootstrapped as a NestJS application:
+  - `src/main.ts` with a basic HTTP server on port 3000.
+  - `src/app.module.ts`, `src/app.controller.ts`, `src/app.service.ts`.
+- The main logical components are present as empty NestJS modules under `src/modules/`:
+  - `ingest`, `storage`, `rules`, `alerts`, `devices`, `auth`.
+  - Currently they are wiring-only (`@Module` definitions without domain logic).
+- Basic HTTP endpoints are available:
+  - `GET /` – simple banner to confirm the API is running.
+  - `GET /health` – JSON healthcheck stub with status and timestamp.
+- Tooling and CI:
+  - TypeScript, Jest + ts-jest, and ESLint 9 + Prettier are configured.
+  - `npm run lint`, `npm test` and `npm run build` are wired and passing.
+  - GitHub Actions CI runs on Node 20 with `npm ci`, lint, tests and build on pushes and PRs targeting `main`.
+
 Future phases will extend this document with data model diagrams,
 request/response flows and scalability considerations.
