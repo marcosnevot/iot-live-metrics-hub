@@ -1,0 +1,32 @@
+{
+  "name": "iot-live-metrics-hub",
+  "version": "0.1.0",
+  "description": "Backend IoT for real-time metrics, alerts and analytics.",
+  "private": true,
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "test"
+  },
+  "scripts": {
+    "lint": "node -e \"console.log('Lint stub - real linting will be added in later phases.')\"",
+    "test": "node -e \"console.log('Test stub - real tests will be added in later phases.')\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marcosnevot/iot-live-metrics-hub.git"
+  },
+  "keywords": [
+    "iot",
+    "time-series",
+    "alerts",
+    "backend",
+    "nest"
+  ],
+  "author": "Marcos Nevot",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/marcosnevot/iot-live-metrics-hub/issues"
+  },
+  "homepage": "https://github.com/marcosnevot/iot-live-metrics-hub#readme"
+}
