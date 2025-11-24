@@ -4,6 +4,38 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2025-11-24
+
+### Added
+
+- Time-series query surface (F5 – Time-Series Storage):
+  - `MetricsModule` and `MetricsController` exposing the read-only endpoint:
+    - `GET /metrics/:deviceId/:metricName?from=&to=` for querying time-series data by device, metric and time range.
+  - HTTP response contract for metrics queries:
+    ```json
+    {
+      "device_id": "<uuid>",
+      "metric_name": "<metric>",
+      "points": [
+        { "ts": "<ISO-8601>", "value": 27.5 }
+      ]
+    }
+    ```
+  - `TimeseriesStorageService.getReadingsForDeviceMetric(deviceId, metricName, from, to)` to retrieve ordered time-series points from the database.
+
+- Automated tests:
+  - End-to-end tests for `GET /metrics/:deviceId/:metricName` covering:
+    - Happy path with data in the requested time range.
+    - Empty result set when the range does not contain data.
+    - Validation errors for missing or inconsistent `from` / `to` parameters.
+
+### Changed
+
+- Storage / PostgreSQL + TimescaleDB:
+  - Converted the `metric_readings(device_id, metric_name, ts, value)` table into a TimescaleDB hypertable partitioned on `ts`.
+  - Added dedicated indexes on `(device_id, metric_name, ts DESC)` and on `(ts DESC)` to optimize device/metric range queries and global time-based queries.
+  - Kept the existing ingest pipeline (HTTP + MQTT) writing into `metric_readings` without contract changes, ensuring compatibility with previous phases.
+
 ## [0.4.0] - 2025-11-24
 
 ### Added
