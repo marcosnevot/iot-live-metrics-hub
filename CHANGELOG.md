@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2025-11-24
+
+### Added
+
+- MQTT ingest pipeline (F4 – MQTT ingest):
+  - `MqttIngestListener` connecting to the Eclipse Mosquitto broker and subscribing to the `devices/{deviceId}/metrics` topic pattern with QoS 1.
+  - Transformation of MQTT messages into `IngestRequestDto` instances and delegation to `IngestService` so HTTP and MQTT share the same ingest pipeline.
+  - Basic validation of MQTT messages: topic shape, JSON parsing, non-empty `metrics` array, and per-metric shape validation (`name: string`, `value: number`, optional `ts: string`).
+
+- Logging and observability:
+  - Channel-aware ingest logging via an optional context parameter in `IngestService.ingest` (`channel = "http" | "mqtt"`).
+  - Structured MQTT-specific log events: `mqtt_message_received`, `mqtt_invalid_json`, `mqtt_unexpected_topic`, `mqtt_invalid_payload`, `mqtt_invalid_metric`, `mqtt_ingest_success`, `mqtt_ingest_error`.
+
+- Automated tests:
+  - Unit tests for `MqttIngestListener` covering: valid message (happy path), invalid JSON payload, invalid topic and invalid metrics payload.
+
+### Changed
+
+- `IngestService`:
+  - Extended the `ingest` method signature to accept an optional context object with the ingest channel, without changing the existing HTTP contract or public API.
+
 ## [0.3.0] - 2025-11-24
 
 ### Added
