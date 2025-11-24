@@ -10,6 +10,7 @@ import { RulesModule } from "./modules/rules/rules.module";
 import { AlertsModule } from "./modules/alerts/alerts.module";
 import { DevicesModule } from "./modules/devices/devices.module";
 import { AuthModule } from "./modules/auth/auth.module";
+import { MetricsModule } from "./modules/metrics/metrics.module";
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { AuthModule } from "./modules/auth/auth.module";
     AlertsModule,
     DevicesModule,
     AuthModule,
+    MetricsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
