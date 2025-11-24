@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2025-11-24
+
+### Added
+
+- HTTP ingest pipeline (F3 – HTTP ingest):
+  - `POST /ingest` endpoint with DTOs and validation using `class-validator` / `class-transformer` and a global `ValidationPipe`.
+  - Basic API key authentication (`Authorization: Bearer <INGEST_API_KEY>`) via `ApiKeyAuthGuard` and `ApiKeyService`.
+  - PostgreSQL integration through `TimeseriesStorageService` and the `metric_readings` table for time-series readings.
+  - Structured logging with `nestjs-pino`, including domain events `ingest_success` and `ingest_db_error`.
+
+- Automated tests:
+  - Unit tests for `IngestService`.
+  - End-to-end tests for `POST /ingest` (happy path, missing API key, and invalid payload).
+
+- Environment-based configuration:
+  - Support for `INGEST_API_KEY`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` in the ingest pipeline.
+
+### Changed
+
+- Application bootstrap:
+  - Updated `main.ts` to use a global `ValidationPipe` and the Pino-based logger.
+  - Updated `AppModule` to register `LoggerModule` from `nestjs-pino` and the existing domain modules.
+
 ## [0.2.0] - 2025-11-23
 
 ### Added
