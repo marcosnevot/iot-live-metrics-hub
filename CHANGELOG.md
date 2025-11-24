@@ -4,6 +4,52 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2025-11-24
+
+### Added
+
+- Rules Engine & Alerts (F6 – Rules Engine):
+  - `rules` table in PostgreSQL for rule definitions:
+    - `id UUID PRIMARY KEY`, `device_id UUID`, `metric_name TEXT`,
+      `rule_type ENUM('MAX','MIN','RANGE')`, `min_value`, `max_value`,
+      `enabled`, `created_at`.
+  - `alerts` table in PostgreSQL for triggered alerts:
+    - `id UUID PRIMARY KEY`, `device_id UUID`, `metric_name TEXT`,
+      `rule_id UUID`, `value`, `status ENUM('ACTIVE','RESOLVED')`,
+      `triggered_at`, `resolved_at`.
+  - `RulesRepository` and `AlertsRepository` using `pg.Pool` and generating UUIDs
+    in the application layer for `id`.
+  - `RulesEngineService` with:
+    - Pure function `shouldTriggerRule(rule, value)` implementing MAX / MIN / RANGE semantics.
+    - `evaluateForMetric({ deviceId, metricName, value })` that:
+      - Loads active rules for the given device + metric.
+      - Evaluates each rule.
+      - Creates `ACTIVE` alerts via `AlertsRepository` for every triggered rule.
+      - Logs `Rule triggered, alert created` at `warn` level.
+  - HTTP APIs:
+    - `POST /rules` to create rules for a given device and metric.
+    - `GET /rules/:deviceId` to list rules per device.
+    - `GET /alerts?status=ACTIVE|RESOLVED` to list alerts, optionally filtered by status.
+    - `PATCH /alerts/:id/resolve` to resolve an alert and mark it as `RESOLVED`.
+  - Automated tests:
+    - Unit tests for `shouldTriggerRule` covering MAX, MIN, RANGE and null/edge cases.
+    - End-to-end test for the full pipeline:
+      - `POST /rules` creates a MAX rule.
+      - `POST /ingest` sends a metric that violates the rule.
+      - `GET /alerts?status=ACTIVE` returns at least one matching alert.
+
+### Changed
+
+- Time-series storage and ingest pipeline:
+  - `TimeseriesStorageService.insertReadings(...)` now triggers the rules engine
+    **after** successfully inserting readings into the `metric_readings` hypertable:
+    - For each reading, it builds a `MetricEvaluationContext` and calls
+      `RulesEngineService.evaluateForMetric(...)`.
+    - Any error in rule evaluation or alert creation is logged as
+      `rules_engine_evaluation_error` but does not fail the ingest request.
+  - `StorageModule` now imports `RulesModule` so that `TimeseriesStorageService`
+    can inject and use `RulesEngineService`.
+
 ## [0.5.0] - 2025-11-24
 
 ### Added
