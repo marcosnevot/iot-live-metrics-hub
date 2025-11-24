@@ -8,7 +8,8 @@ IoT Live Metrics Hub is a monolithic NestJS backend designed to:
 - Store readings as time-series in PostgreSQL + TimescaleDB.
 - Evaluate simple alert rules (MIN / MAX / RANGE) on each reading.
 - Persist alerts with status and lifecycle.
-- Expose query APIs for metrics, rules and alerts.
+- Expose business APIs for querying metrics, rules, alerts and devices.
+- Register devices and provision per-device API keys (for now only generated and returned on creation; ingest still uses a single global API key).
 
 The system is implemented as a modular monolith prepared for a
 future split into services if needed.
@@ -22,7 +23,7 @@ future split into services if needed.
 
 - **Storage module**
   - Time-series storage for metric readings (`metric_readings` hypertable).
-  - Relational storage for rules and alerts (PostgreSQL tables `rules` and `alerts`).
+  - Relational storage for rules, alerts and devices (PostgreSQL tables `rules`, `alerts` and `devices`).
   - `TimeseriesStorageService` as the main abstraction for writing/reading metrics, and the integration point with the rules engine.
 
 - **Metrics module**
@@ -37,18 +38,19 @@ future split into services if needed.
 - **Alerts module**
   - Alert lifecycle (ACTIVE / RESOLVED).
   - Persistence of triggered alerts.
-  - HTTP APIs for listing and resolving alerts.
+  - HTTP APIs for listing and resolving alerts, with filters by status, device, metric name and time range.
 
 - **Devices module**
-  - Placeholder module for future device registration and API key provisioning.
-  - The current implementation uses a single ingest API key configured via environment variables.
+  - Device registration and catalog, backed by the `devices` table.
+  - HTTP APIs for listing and creating devices (`GET /devices`, `POST /devices`), including per-device API key provisioning (API keys are generated and stored, and only returned once at creation time). The ingest pipeline still uses a single global API key from environment variables.
 
 - **Auth module**
   - API Key–based authentication for ingest requests.
   - JWT-based user authentication is specified at design level but not yet implemented in code.
 
-These map to the high-level components C1–C5 described in the
-Master Design Document (plus the time-series query surface).
+  - **API documentation**
+  - OpenAPI/Swagger documentation exposed at `/docs`, covering App, Ingest, Metrics, Rules, Alerts and Devices APIs, including the `api-key` security scheme for ingest endpoints.
+
 
 ## Key technical decisions (DEC)
 
@@ -62,7 +64,7 @@ Master Design Document (plus the time-series query surface).
 - **DEC-08** – No local shell scripts; only standalone commands.
 - **DEC-09** – Strict alignment with the corporate Git/GitHub guide.
 
-## Implementation status (release 0.6.0 – F3 HTTP ingest + F4 MQTT ingest + F5 Time-Series Storage + F6 Rules Engine & Alerts)
+## Implementation status (release 0.7.0 – F3 HTTP ingest + F4 MQTT ingest + F5 Time-Series Storage + F6 Rules Engine & Alerts + F7 Business APIs & Swagger)
 
 At this stage, the backend implements the following:
 
@@ -73,6 +75,11 @@ At this stage, the backend implements the following:
   - Global `ValidationPipe` for DTO-based request validation (`whitelist`, `forbidNonWhitelisted`, implicit conversion).
   - Application logging wired through `nestjs-pino` as the main logger, emitting structured JSON logs.
   - Core Nest module wiring in `src/app.module.ts`.
+
+- API documentation:
+  - `@nestjs/swagger` + `swagger-ui-express` configured in `src/main.ts`.
+  - OpenAPI document exposed at `GET /docs` with tags for App, Ingest, Metrics, Rules, Alerts and Devices.
+  - API key security scheme (`api-key`) configured for ingest endpoints.
 
 - Environment and configuration:
   - Ingest and database configuration driven by environment variables:
@@ -172,6 +179,7 @@ At this stage, the backend implements the following:
       ]
     }
     ```
+- The metrics API is fully documented in Swagger under the `Metrics` tag, including path parameters and required `from` / `to` query parameters.
 
 This module satisfies the initial metrics query requirements and is used as a debugging and analysis tool for the rules engine.
 
@@ -260,24 +268,33 @@ The Alerts module implements RF-13 (alert generation), RF-14 (alert status) and 
       - Generates a UUID `id` in the application layer.
       - Inserts a row with `status = 'ACTIVE'` and `triggered_at = now()`.
       - Returns the created `Alert` domain object.
+    - `findByCriteria(criteria)`:
+      - Accepts an object with optional filters `{ status, deviceId, metricName, from, to }`.
+      - Builds a parameterized `SELECT` with `WHERE` clauses composed from the provided filters.
+      - Orders results by `triggered_at DESC`.
     - `findByStatus(status?: AlertStatus)`:
-      - If status is omitted: returns all alerts ordered by `triggered_at DESC`.
-      - If status is provided (`ACTIVE` or `RESOLVED`): filters by that status.
+      - Backwards-compatible wrapper that delegates to `findByCriteria({ status })`.
     - `resolveAlert(id: string, resolvedAt: Date = new Date())`:
       - Sets `status = 'RESOLVED'` and `resolved_at = resolvedAt`.
       - Returns the updated alert, or `null` if no alert was found.
 
 - **Alerts HTTP API** (`AlertsController`):
   - Endpoints:
-    - `GET /alerts?status=ACTIVE|RESOLVED`:
-      - Optional `status` query string.
-      - Validates allowed values (`ACTIVE`, `RESOLVED`).
-      - Delegates to `AlertsRepository.findByStatus(...)`.
+    - `GET /alerts`:
+      - Supports the following optional query parameters:
+        - `status`: `ACTIVE` | `RESOLVED`.
+        - `device_id`: UUID of the device associated with the alert.
+        - `metric_name`: metric name associated with the alert.
+        - `from`, `to`: ISO-8601 timestamps defining the time range for `triggered_at`.
+      - Validates allowed values for `status`.
+      - Ensures that, when both `from` and `to` are provided, `from <= to` and both are valid ISO-8601 timestamps.
+      - Delegates to `AlertsRepository.findByCriteria(...)`.
       - Returns an array of `Alert` domain objects.
     - `PATCH /alerts/:id/resolve`:
       - Attempts to resolve an alert by ID via `AlertsRepository.resolveAlert(...)`.
       - Returns the updated `Alert` on success.
       - Returns HTTP `404` if no alert with that ID exists.
+  - The alerts API is fully documented in Swagger under the `alerts` tag, including query parameters and response schema.
 
 The Alerts module is fully wired into the rules engine (`RulesEngineService` uses `AlertsRepository` directly) and exposes the basic read/resolve operations.
 
@@ -290,11 +307,12 @@ The Alerts module is fully wired into the rules engine (`RulesEngineService` use
   - JWT-based user authentication and authorization (for dashboard / admin APIs) is still pending and reserved for future phases.
 
 - **Devices module**:
-  - Present as a NestJS module wired into the application.
-  - Device metadata and registration APIs (`/devices`) are defined in the Master Design Document but not yet implemented in code.
-  - For now, device identity is inferred from:
-    - `device_id` in the ingest payload/topic.
-    - Global ingest API key (no per-device token yet).
+  - Implemented as a NestJS module wired into the application with its own repository and controller.
+  - Device metadata is persisted in the `devices` table (`id`, `name`, `api_key`, `active`, `created_at`, `updated_at`).
+  - HTTP APIs implemented:
+    - `GET /devices` → lists all registered devices without exposing API keys.
+    - `POST /devices` → registers a new device and returns its `id` and `api_key` (the API key is only returned at creation time and then stored).
+  - The ingest pipeline still infers device identity from the `device_id` field/topic and uses a single global ingest API key configured via environment variables; per-device keys are not yet enforced at ingest time.
 
 ### HTTP endpoints
 
@@ -312,10 +330,12 @@ Implemented HTTP endpoints at this stage:
   - Normalizes metric names and timestamps.
   - Persists readings into `metric_readings`.
   - Triggers rule evaluation for each persisted reading.
+  - Returns `200 OK` with `{ "status": "ok", "stored": <number_of_points> }` on success.
 
 - `GET /metrics/:deviceId/:metricName?from=&to=`  
   Read-only metrics endpoint:
   - Returns ordered time-series points for the requested device/metric/time range.
+  - Requires valid UUID `deviceId`, non-empty `metricName` and ISO-8601 `from` / `to` with `from <= to`.
 
 - `POST /rules`  
   Creates a new rule for a device/metric (MAX/MIN/RANGE).
@@ -323,17 +343,27 @@ Implemented HTTP endpoints at this stage:
 - `GET /rules/:deviceId`  
   Lists all rules defined for a given device.
 
-- `GET /alerts?status=ACTIVE|RESOLVED`  
-  Lists alerts, optionally filtered by status.
+- `GET /alerts`  
+  Lists alerts, optionally filtered by:
+  - `status` (`ACTIVE` | `RESOLVED`),
+  - `device_id` (UUID),
+  - `metric_name`,
+  - `from` / `to` (ISO-8601 time range on `triggered_at`).
 
 - `PATCH /alerts/:id/resolve`  
   Resolves an alert, changing its status from `ACTIVE` to `RESOLVED`.
+
+- `GET /devices`  
+  Returns the list of registered devices without exposing their API keys.
+
+- `POST /devices`  
+  Registers a new device and returns its `id` and `api_key`. The API key is generated server-side and only returned in this response.
 
 ### Persistence and environment
 
 - **PostgreSQL + TimescaleDB**:
   - Hypertable `metric_readings` as the central time-series storage.
-  - Relational tables `rules` and `alerts` for the rules/alerts domain.
+  - Relational tables `rules`, `alerts` and `devices` for the rules/alerts/devices domain.
   - Connection pooling handled by `pg` `Pool` instances in:
     - `TimeseriesStorageService`
     - `RulesRepository`
@@ -376,7 +406,7 @@ Implemented HTTP endpoints at this stage:
 
 - **End-to-end tests**:
   - `POST /ingest`:
-    - Happy path (valid payload, authenticated) → `201` with `{ status: "ok", stored: N }`.
+    - Happy path (valid payload, authenticated) → `200 OK` with `{ "status": "ok", "stored": N }`.
     - Missing API key → `401`.
     - Invalid payload (e.g. empty `metrics`) → `400`.
   - `GET /metrics/:deviceId/:metricName`:
