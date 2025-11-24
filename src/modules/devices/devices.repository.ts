@@ -1,8 +1,7 @@
-
-import { Injectable, Logger } from '@nestjs/common';
-import { Pool } from 'pg';
-import { randomBytes, randomUUID } from 'crypto';
-import { Device } from './device.entity';
+import { Injectable, Logger } from "@nestjs/common";
+import { Pool } from "pg";
+import { randomBytes, randomUUID } from "crypto";
+import { Device } from "./device.entity";
 
 @Injectable()
 export class DevicesRepository {
@@ -11,11 +10,11 @@ export class DevicesRepository {
 
   constructor() {
     this.pool = new Pool({
-      host: process.env.DB_HOST ?? '127.0.0.1',
+      host: process.env.DB_HOST ?? "127.0.0.1",
       port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 5432,
-      user: process.env.DB_USER ?? 'postgres',
-      password: process.env.DB_PASSWORD ?? 'postgres',
-      database: process.env.DB_NAME ?? 'iot_live_metrics_hub',
+      user: process.env.DB_USER ?? "postgres",
+      password: process.env.DB_PASSWORD ?? "admin",
+      database: process.env.DB_NAME ?? "postgres",
     });
   }
 
@@ -34,7 +33,7 @@ export class DevicesRepository {
   async createDevice(name: string): Promise<Device> {
     const id = randomUUID();
     // Strong API key generation; hardening (hashing, rotation, binding) coming in F8.
-    const apiKey = randomBytes(32).toString('hex');
+    const apiKey = randomBytes(32).toString("hex");
     const active = true;
     const now = new Date();
 
@@ -49,7 +48,7 @@ export class DevicesRepository {
 
     const device = this.mapRowToDevice(result.rows[0]);
 
-    this.logger.log('Device created', {
+    this.logger.log("Device created", {
       deviceId: device.id,
       name: device.name,
     });
