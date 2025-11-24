@@ -1,6 +1,6 @@
 {
   "name": "iot-live-metrics-hub",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Backend IoT for real-time metrics, alerts and analytics.",
   "private": true,
   "main": "dist/main.js",
@@ -40,6 +40,7 @@
     "@nestjs/common": "^11.1.9",
     "@nestjs/core": "^11.1.9",
     "@nestjs/platform-express": "^11.1.9",
+    "@nestjs/swagger": "^11.2.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "mqtt": "^5.14.1",
@@ -47,7 +48,8 @@
     "pg": "^8.16.3",
     "pino-http": "^10.5.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "swagger-ui-express": "^5.0.1"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.12",
