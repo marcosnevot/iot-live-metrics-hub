@@ -1,8 +1,9 @@
 import { Module } from "@nestjs/common";
 import { TimeseriesStorageService } from "./timeseries-storage.service";
+import { RulesModule } from "../rules/rules.module";
 
 @Module({
-  imports: [],
+  imports: [RulesModule],
   providers: [TimeseriesStorageService],
   exports: [TimeseriesStorageService],
 })

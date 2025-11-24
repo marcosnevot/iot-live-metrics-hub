@@ -1,5 +1,9 @@
-import { Injectable, OnModuleDestroy } from "@nestjs/common";
+import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { Pool } from "pg";
+import {
+  MetricEvaluationContext,
+  RulesEngineService,
+} from "../rules/rules-engine.service";
 
 export interface TimeseriesReading {
   deviceId: string;
@@ -11,8 +15,9 @@ export interface TimeseriesReading {
 @Injectable()
 export class TimeseriesStorageService implements OnModuleDestroy {
   private pool: Pool;
+  private readonly logger = new Logger(TimeseriesStorageService.name);
 
-  constructor() {
+  constructor(private readonly rulesEngineService: RulesEngineService) {
     this.pool = new Pool({
       host: process.env.DB_HOST || "localhost",
       port: Number(process.env.DB_PORT || "5432"),
@@ -52,6 +57,29 @@ export class TimeseriesStorageService implements OnModuleDestroy {
     `;
 
     await this.pool.query(query, values);
+
+    // Evaluate rules for each reading after it has been persisted
+    const evaluationPromises = readings.map((reading) => {
+      const context: MetricEvaluationContext = {
+        deviceId: reading.deviceId,
+        metricName: reading.metricName,
+        value: reading.value,
+      };
+
+      return this.rulesEngineService
+        .evaluateForMetric(context)
+        .catch((error) => {
+          this.logger.error({
+            msg: "rules_engine_evaluation_error",
+            deviceId: reading.deviceId,
+            metricName: reading.metricName,
+            value: reading.value,
+            error: (error as Error).message,
+          });
+        });
+    });
+
+    await Promise.all(evaluationPromises);
   }
 
   /**
