@@ -37,7 +37,7 @@ Master Design Document.
 - **DEC-08** – No local shell scripts; only standalone commands.
 - **DEC-09** – Strict alignment with the corporate Git/GitHub guide.
 
-## Implementation status (release 0.3.0 – F3 HTTP ingest)
+## Implementation status (release 0.4.0 – F3 HTTP ingest + F4 MQTT ingest)
 
 At this stage:
 
@@ -53,6 +53,9 @@ At this stage:
     - Request/response contracts modeled with DTOs (`IngestRequestDto`, `MetricDto`) and validated via `class-validator` / `class-transformer`.
     - Basic API key authentication for device ingest using `ApiKeyAuthGuard` + `ApiKeyService` and the `Authorization: Bearer <INGEST_API_KEY>` header.
     - Domain-level logging (`ingest_success`, `ingest_db_error`) emitted as structured JSON via `nestjs-pino`.
+    - MQTT ingest adapter implemented as `MqttIngestListener`, connecting to Mosquitto and subscribing to the `devices/{deviceId}/metrics` topic pattern.
+    - MQTT messages are transformed into `IngestRequestDto` instances and delegated to `IngestService`, so HTTP and MQTT share the same ingest pipeline.
+    - Per-channel ingest logging is supported via an optional context on `IngestService.ingest(...)` (`channel = "http" | "mqtt"`).
   - **Storage module**
     - Minimal time-series persistence pipeline implemented through `TimeseriesStorageService`.
     - PostgreSQL table `metric_readings(device_id, metric_name, ts, value)` created as the initial storage for metric readings, with basic indexes.
@@ -68,16 +71,45 @@ At this stage:
   - `GET /health` – JSON healthcheck stub with status and timestamp.
   - `POST /ingest` – authenticated ingest endpoint that validates the payload, normalizes metric names / timestamps, and writes readings into PostgreSQL.
 
+- MQTT ingest:
+  - MQTT client implemented as `MqttIngestListener`, started as a NestJS provider inside `IngestModule`.
+  - Connects by default to `mqtt://127.0.0.1:1883` (overridable via `MQTT_BROKER_URL`).
+  - Subscribes to the topic pattern `devices/{deviceId}/metrics` with QoS 1.
+  - For each incoming message:
+    - Extracts `deviceId` from the topic.
+    - Parses the JSON payload and expects a `metrics` array.
+    - Performs basic shape validation on each metric (`name: string`, `value: number`, optional `ts: string`).
+    - Builds an `IngestRequestDto` and calls `IngestService.ingest(..., { channel: "mqtt" })`.
+  - MQTT-specific logs include:
+    - `mqtt_message_received`
+    - `mqtt_invalid_json`
+    - `mqtt_unexpected_topic`
+    - `mqtt_invalid_payload`
+    - `mqtt_invalid_metric`
+    - `mqtt_ingest_success`
+    - `mqtt_ingest_error`
+  - Invalid MQTT messages are dropped safely with warning logs and do not impact the main process.
+
 - Persistence and environment:
   - Local PostgreSQL 15 instance running in Docker (`iot_db` container).
   - Connection managed via a `pg` connection pool inside `TimeseriesStorageService`.
   - Database and ingest configuration driven by environment variables:
     - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
     - `INGEST_API_KEY`
+    - `MQTT_BROKER_URL` (optional; defaults to `mqtt://127.0.0.1:1883` in local dev).
+  - Local MQTT broker (Mosquitto 2.x) running in Docker (`iot_mqtt` container), with config mounted from the project:
+    - `mosquitto/config/mosquitto.conf`
+    - `mosquitto/data/`
+    - `mosquitto/log/`
 
 - Tooling, tests and CI:
   - TypeScript, Jest + ts-jest, and ESLint 9 + Prettier are configured and passing.
   - Unit tests for `AppService` and `IngestService`.
+  - Unit tests for `MqttIngestListener` covering:
+    - Valid MQTT message path (happy path).
+    - Invalid JSON payload.
+    - Invalid topic.
+    - Invalid metrics payload.
   - End-to-end tests for `POST /ingest` (happy path, missing API key, invalid payload).
   - GitHub Actions CI runs on Node 20 with `npm ci`, lint, tests and build on pushes and PRs targeting `main`.
 

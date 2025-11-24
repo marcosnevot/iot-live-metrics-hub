@@ -31,7 +31,6 @@ export class TimeseriesStorageService implements OnModuleDestroy {
       return;
     }
 
-    // Inserción por batch con VALUES múltiples
     const values: any[] = [];
     const placeholders: string[] = [];
 

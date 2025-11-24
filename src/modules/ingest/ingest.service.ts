@@ -5,14 +5,22 @@ import {
   TimeseriesStorageService,
 } from "../storage/timeseries-storage.service";
 
+type IngestContext = {
+  channel?: "http" | "mqtt";
+};
+
 @Injectable()
 export class IngestService {
   private readonly logger = new Logger(IngestService.name);
 
   constructor(private readonly storage: TimeseriesStorageService) {}
 
-  async ingest(request: IngestRequestDto): Promise<number> {
+  async ingest(
+    request: IngestRequestDto,
+    context?: IngestContext,
+  ): Promise<number> {
     const now = new Date();
+    const channel = context?.channel ?? "http";
 
     const readings: TimeseriesReading[] = request.metrics.map((metric) => {
       const ts = metric.ts ? new Date(metric.ts) : now;
@@ -30,6 +38,7 @@ export class IngestService {
     } catch (error) {
       this.logger.error({
         msg: "ingest_db_error",
+        channel,
         deviceId: request.device_id,
         metricsCount: readings.length,
         error: (error as Error).message,
@@ -39,6 +48,7 @@ export class IngestService {
 
     this.logger.log({
       msg: "ingest_success",
+      channel,
       deviceId: request.device_id,
       metricsCount: readings.length,
     });
