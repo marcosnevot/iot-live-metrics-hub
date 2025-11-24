@@ -26,6 +26,10 @@ export class TimeseriesStorageService implements OnModuleDestroy {
     await this.pool.end();
   }
 
+  /**
+   * Insert an array of readings into the metric_readings hypertable.
+   * Uses a single multi-row INSERT for efficiency.
+   */
   async insertReadings(readings: TimeseriesReading[]): Promise<void> {
     if (!readings.length) {
       return;
@@ -48,5 +52,37 @@ export class TimeseriesStorageService implements OnModuleDestroy {
     `;
 
     await this.pool.query(query, values);
+  }
+
+  /**
+   * Retrieve readings for a given device + metric within a time range.
+   * Results are ordered by ascending timestamp.
+   */
+  async getReadingsForDeviceMetric(
+    deviceId: string,
+    metricName: string,
+    from: Date,
+    to: Date,
+  ): Promise<TimeseriesReading[]> {
+    const query = `
+      SELECT device_id, metric_name, ts, value
+      FROM metric_readings
+      WHERE device_id = $1
+        AND metric_name = $2
+        AND ts >= $3
+        AND ts <= $4
+      ORDER BY ts ASC
+    `;
+
+    const params = [deviceId, metricName, from, to];
+
+    const result = await this.pool.query(query, params);
+
+    return result.rows.map((row) => ({
+      deviceId: row.device_id,
+      metricName: row.metric_name,
+      ts: row.ts,
+      value: Number(row.value),
+    }));
   }
 }

@@ -17,13 +17,16 @@ future split into services if needed.
 - **Ingest module**: HTTP `/ingest` endpoint and MQTT adapter.
 - **Storage module**: Relational metadata (devices, rules, alerts)
   and time-series tables for readings.
+- **Metrics module**: Read-only time-series query APIs built on top
+  of the `metric_readings` hypertable (per-device, per-metric and
+  by time range).
 - **Rules module**: Rule evaluation and alert triggering.
 - **Alerts module**: Alert lifecycle and query APIs.
 - **Devices module**: Device registration and API key handling.
 - **Auth module**: JWT-based user authentication and access control.
 
 These map to the high-level components C1–C5 described in the
-Master Design Document.
+Master Design Document (plus the time-series query surface).
 
 ## Key technical decisions (DEC)
 
@@ -37,7 +40,7 @@ Master Design Document.
 - **DEC-08** – No local shell scripts; only standalone commands.
 - **DEC-09** – Strict alignment with the corporate Git/GitHub guide.
 
-## Implementation status (release 0.4.0 – F3 HTTP ingest + F4 MQTT ingest)
+## Implementation status (release 0.5.0 – F3 HTTP ingest + F4 MQTT ingest + F5 Time-Series Storage)
 
 At this stage:
 
@@ -57,9 +60,33 @@ At this stage:
     - MQTT messages are transformed into `IngestRequestDto` instances and delegated to `IngestService`, so HTTP and MQTT share the same ingest pipeline.
     - Per-channel ingest logging is supported via an optional context on `IngestService.ingest(...)` (`channel = "http" | "mqtt"`).
   - **Storage module**
-    - Minimal time-series persistence pipeline implemented through `TimeseriesStorageService`.
-    - PostgreSQL table `metric_readings(device_id, metric_name, ts, value)` created as the initial storage for metric readings, with basic indexes.
+    - Time-series persistence pipeline implemented through `TimeseriesStorageService`.
+    - PostgreSQL 15 instance extended with TimescaleDB and a `metric_readings(device_id, metric_name, ts, value)` hypertable used as the primary storage for metric readings.
+    - Dedicated indexes on `(device_id, metric_name, ts DESC)` and on `(ts DESC)` to support device/metric range queries and global time-based queries.
+    - Batch insert path `insertReadings(...)` used by the ingest pipeline to write multiple readings efficiently in a single multi-row `INSERT`.
     - Broader relational metadata (devices, rules, alerts) remains to be implemented in later phases.
+  - **Metrics module**
+    - `MetricsModule` wired into `AppModule` and importing `StorageModule`.
+    - `MetricsController` exposing a read-only endpoint:
+      - `GET /metrics/:deviceId/:metricName?from=&to=` which:
+        - Validates `deviceId` as a UUID v4.
+        - Expects `from` and `to` as ISO-8601 timestamps.
+        - Validates that `from <= to`.
+        - Delegates to `TimeseriesStorageService.getReadingsForDeviceMetric(...)`.
+      - Returns a payload of the form:
+        ```json
+        {
+          "device_id": "<uuid>",
+          "metric_name": "<metric>",
+          "points": [
+            { "ts": "<ISO-8601>", "value": 27.5 }
+          ]
+        }
+        ```
+    - `TimeseriesStorageService` extended with a range-read method:
+      - `getReadingsForDeviceMetric(deviceId, metricName, from, to)` which
+        performs a parameterized `SELECT` on the `metric_readings` hypertable
+        and returns ordered time-series points.
   - **Auth module**
     - Device-side API key validation service and guard used by the ingest pipeline.
     - User-side JWT authentication is defined at design level but not yet implemented in code.
@@ -69,7 +96,10 @@ At this stage:
 - HTTP endpoints:
   - `GET /` – simple banner to confirm the API is running.
   - `GET /health` – JSON healthcheck stub with status and timestamp.
-  - `POST /ingest` – authenticated ingest endpoint that validates the payload, normalizes metric names / timestamps, and writes readings into PostgreSQL.
+  - `POST /ingest` – authenticated ingest endpoint that validates the payload, normalizes metric names / timestamps, and writes readings into PostgreSQL / TimescaleDB.
+  - `GET /metrics/:deviceId/:metricName` – read-only metrics endpoint that
+    accepts `from` and `to` as query parameters (ISO-8601 timestamps) and
+    returns ordered time-series points for the requested device and metric.
 
 - MQTT ingest:
   - MQTT client implemented as `MqttIngestListener`, started as a NestJS provider inside `IngestModule`.
@@ -91,7 +121,8 @@ At this stage:
   - Invalid MQTT messages are dropped safely with warning logs and do not impact the main process.
 
 - Persistence and environment:
-  - Local PostgreSQL 15 instance running in Docker (`iot_db` container).
+  - Local PostgreSQL 15 instance running in Docker (`iot_db` container) with the TimescaleDB extension enabled.
+  - Primary time-series table modeled as the `metric_readings` hypertable (partitioned on `ts`), with indexes tuned for device/metric lookups and chronological queries.
   - Connection managed via a `pg` connection pool inside `TimeseriesStorageService`.
   - Database and ingest configuration driven by environment variables:
     - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
@@ -111,6 +142,10 @@ At this stage:
     - Invalid topic.
     - Invalid metrics payload.
   - End-to-end tests for `POST /ingest` (happy path, missing API key, invalid payload).
+  - End-to-end tests for `GET /metrics/:deviceId/:metricName` covering:
+    - Happy path with data in the requested time range.
+    - Empty result set when the range does not contain data.
+    - Validation errors for missing or inconsistent `from` / `to` parameters.
   - GitHub Actions CI runs on Node 20 with `npm ci`, lint, tests and build on pushes and PRs targeting `main`.
 
 Future phases will extend this document with detailed data model diagrams,
