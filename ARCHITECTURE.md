@@ -4,26 +4,48 @@
 
 IoT Live Metrics Hub is a monolithic NestJS backend designed to:
 
-- Ingest IoT metrics over HTTP (and MQTT as an optional path).
+- Ingest IoT metrics over HTTP and MQTT.
 - Store readings as time-series in PostgreSQL + TimescaleDB.
 - Evaluate simple alert rules (MIN / MAX / RANGE) on each reading.
-- Expose query APIs for devices, metrics and alerts.
+- Persist alerts with status and lifecycle.
+- Expose query APIs for metrics, rules and alerts.
 
 The system is implemented as a modular monolith prepared for a
 future split into services if needed.
 
 ## Logical components
 
-- **Ingest module**: HTTP `/ingest` endpoint and MQTT adapter.
-- **Storage module**: Relational metadata (devices, rules, alerts)
-  and time-series tables for readings.
-- **Metrics module**: Read-only time-series query APIs built on top
-  of the `metric_readings` hypertable (per-device, per-metric and
-  by time range).
-- **Rules module**: Rule evaluation and alert triggering.
-- **Alerts module**: Alert lifecycle and query APIs.
-- **Devices module**: Device registration and API key handling.
-- **Auth module**: JWT-based user authentication and access control.
+- **Ingest module**
+  - HTTP `/ingest` endpoint.
+  - MQTT adapter subscribed to `devices/{deviceId}/metrics`.
+  - Shared ingest pipeline (`IngestService`) used by both channels.
+
+- **Storage module**
+  - Time-series storage for metric readings (`metric_readings` hypertable).
+  - Relational storage for rules and alerts (PostgreSQL tables `rules` and `alerts`).
+  - `TimeseriesStorageService` as the main abstraction for writing/reading metrics, and the integration point with the rules engine.
+
+- **Metrics module**
+  - Read-only time-series query APIs built on top of the `metric_readings` hypertable.
+  - Per-device, per-metric and by time range queries.
+
+- **Rules module**
+  - Persistence and querying of rule definitions.
+  - Rules evaluation for each new reading (MAX / MIN / RANGE).
+  - HTTP APIs for creating and listing rules per device.
+
+- **Alerts module**
+  - Alert lifecycle (ACTIVE / RESOLVED).
+  - Persistence of triggered alerts.
+  - HTTP APIs for listing and resolving alerts.
+
+- **Devices module**
+  - Placeholder module for future device registration and API key provisioning.
+  - The current implementation uses a single ingest API key configured via environment variables.
+
+- **Auth module**
+  - API Key–based authentication for ingest requests.
+  - JWT-based user authentication is specified at design level but not yet implemented in code.
 
 These map to the high-level components C1–C5 described in the
 Master Design Document (plus the time-series query surface).
@@ -33,84 +55,65 @@ Master Design Document (plus the time-series query surface).
 - **DEC-01** – Backend: Node.js (NestJS).
 - **DEC-02** – Database: PostgreSQL + TimescaleDB.
 - **DEC-03** – MQTT broker: Eclipse Mosquitto.
-- **DEC-04** – Observability: JSON logs + Prometheus `/metrics`.
+- **DEC-04** – Observability: JSON logs + Prometheus `/metrics` (planned).
 - **DEC-05** – Auth: API Key for devices + JWT HS256 for users.
 - **DEC-06** – Monolithic modular architecture for v1.
 - **DEC-07** – Docker Desktop as primary local environment.
 - **DEC-08** – No local shell scripts; only standalone commands.
 - **DEC-09** – Strict alignment with the corporate Git/GitHub guide.
 
-## Implementation status (release 0.5.0 – F3 HTTP ingest + F4 MQTT ingest + F5 Time-Series Storage)
+## Implementation status (release 0.6.0 – F3 HTTP ingest + F4 MQTT ingest + F5 Time-Series Storage + F6 Rules Engine & Alerts)
 
-At this stage:
+At this stage, the backend implements the following:
 
-- The backend is bootstrapped as a NestJS application:
-  - `src/main.ts` with a basic HTTP server on port 3000.
-  - Global `ValidationPipe` for DTO-based request validation.
-  - Application logging wired through `nestjs-pino` as the main logger.
-  - `src/app.module.ts`, `src/app.controller.ts`, `src/app.service.ts`.
+### Core application and infrastructure
 
-- Logical components under `src/modules/`:
-  - **Ingest module**
-    - Real HTTP endpoint `POST /ingest` implemented according to the Master Design Document.
-    - Request/response contracts modeled with DTOs (`IngestRequestDto`, `MetricDto`) and validated via `class-validator` / `class-transformer`.
-    - Basic API key authentication for device ingest using `ApiKeyAuthGuard` + `ApiKeyService` and the `Authorization: Bearer <INGEST_API_KEY>` header.
-    - Domain-level logging (`ingest_success`, `ingest_db_error`) emitted as structured JSON via `nestjs-pino`.
-    - MQTT ingest adapter implemented as `MqttIngestListener`, connecting to Mosquitto and subscribing to the `devices/{deviceId}/metrics` topic pattern.
-    - MQTT messages are transformed into `IngestRequestDto` instances and delegated to `IngestService`, so HTTP and MQTT share the same ingest pipeline.
-    - Per-channel ingest logging is supported via an optional context on `IngestService.ingest(...)` (`channel = "http" | "mqtt"`).
-  - **Storage module**
-    - Time-series persistence pipeline implemented through `TimeseriesStorageService`.
-    - PostgreSQL 15 instance extended with TimescaleDB and a `metric_readings(device_id, metric_name, ts, value)` hypertable used as the primary storage for metric readings.
-    - Dedicated indexes on `(device_id, metric_name, ts DESC)` and on `(ts DESC)` to support device/metric range queries and global time-based queries.
-    - Batch insert path `insertReadings(...)` used by the ingest pipeline to write multiple readings efficiently in a single multi-row `INSERT`.
-    - Broader relational metadata (devices, rules, alerts) remains to be implemented in later phases.
-  - **Metrics module**
-    - `MetricsModule` wired into `AppModule` and importing `StorageModule`.
-    - `MetricsController` exposing a read-only endpoint:
-      - `GET /metrics/:deviceId/:metricName?from=&to=` which:
-        - Validates `deviceId` as a UUID v4.
-        - Expects `from` and `to` as ISO-8601 timestamps.
-        - Validates that `from <= to`.
-        - Delegates to `TimeseriesStorageService.getReadingsForDeviceMetric(...)`.
-      - Returns a payload of the form:
-        ```json
-        {
-          "device_id": "<uuid>",
-          "metric_name": "<metric>",
-          "points": [
-            { "ts": "<ISO-8601>", "value": 27.5 }
-          ]
-        }
-        ```
-    - `TimeseriesStorageService` extended with a range-read method:
-      - `getReadingsForDeviceMetric(deviceId, metricName, from, to)` which
-        performs a parameterized `SELECT` on the `metric_readings` hypertable
-        and returns ordered time-series points.
-  - **Auth module**
-    - Device-side API key validation service and guard used by the ingest pipeline.
-    - User-side JWT authentication is defined at design level but not yet implemented in code.
-  - **Rules, Alerts, Devices modules**
-    - Present as NestJS modules and imported into `AppModule`, but still act as wiring-only placeholders without domain logic. They will be populated in later phases (rules evaluation, alert lifecycle, device registration and API key provisioning).
+- NestJS application bootstrap:
+  - `src/main.ts` with an HTTP server on port 3000.
+  - Global `ValidationPipe` for DTO-based request validation (`whitelist`, `forbidNonWhitelisted`, implicit conversion).
+  - Application logging wired through `nestjs-pino` as the main logger, emitting structured JSON logs.
+  - Core Nest module wiring in `src/app.module.ts`.
 
-- HTTP endpoints:
-  - `GET /` – simple banner to confirm the API is running.
-  - `GET /health` – JSON healthcheck stub with status and timestamp.
-  - `POST /ingest` – authenticated ingest endpoint that validates the payload, normalizes metric names / timestamps, and writes readings into PostgreSQL / TimescaleDB.
-  - `GET /metrics/:deviceId/:metricName` – read-only metrics endpoint that
-    accepts `from` and `to` as query parameters (ISO-8601 timestamps) and
-    returns ordered time-series points for the requested device and metric.
+- Environment and configuration:
+  - Ingest and database configuration driven by environment variables:
+    - `INGEST_API_KEY`
+    - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+    - `MQTT_BROKER_URL` (optional; defaults to `mqtt://127.0.0.1:1883` in local dev).
+  - Local PostgreSQL 15 + TimescaleDB in Docker (`iot_db` container).
+  - Local Mosquitto broker in Docker (`iot_mqtt` container) with project-local config and data.
 
-- MQTT ingest:
-  - MQTT client implemented as `MqttIngestListener`, started as a NestJS provider inside `IngestModule`.
+### Ingest module
+
+- **HTTP ingest** (`IngestModule` + `IngestController` + `IngestService`):
+  - Real HTTP endpoint `POST /ingest` implemented according to the Master Design Document.
+  - Request/response contracts modeled with DTOs (`IngestRequestDto`, `MetricDto`) and validated via `class-validator` / `class-transformer`.
+  - Device-side API key authentication for ingest using `ApiKeyAuthGuard` + `ApiKeyService`, expecting header:
+    - `Authorization: Bearer <INGEST_API_KEY>`.
+  - `IngestService.ingest(...)`:
+    - Normalizes metric names to lowercase.
+    - Normalizes timestamps (uses metric timestamp if provided, otherwise “now”).
+    - Builds a batch of `TimeseriesReading` objects.
+    - Delegates persistence to `TimeseriesStorageService.insertReadings(...)`.
+    - Emits structured logs:
+      - `ingest_success` with channel, device and metrics count.
+      - `ingest_db_error` when persistence fails (including device and metrics count).
+
+- **Per-channel context**:
+  - `IngestService.ingest(request, { channel: "http" | "mqtt" })` propagates a logical channel for logging and troubleshooting.
+
+- **MQTT ingest** (`MqttIngestListener`):
+  - Implemented as a NestJS injectable in `IngestModule`.
   - Connects by default to `mqtt://127.0.0.1:1883` (overridable via `MQTT_BROKER_URL`).
-  - Subscribes to the topic pattern `devices/{deviceId}/metrics` with QoS 1.
+  - Subscribes to topic pattern `devices/{deviceId}/metrics` with QoS 1.
   - For each incoming message:
     - Extracts `deviceId` from the topic.
-    - Parses the JSON payload and expects a `metrics` array.
-    - Performs basic shape validation on each metric (`name: string`, `value: number`, optional `ts: string`).
+    - Parses the JSON payload and expects a non-empty `metrics` array.
+    - Validates each metric:
+      - `name: string`
+      - `value: number` (non-NaN)
+      - optional `ts: string`
     - Builds an `IngestRequestDto` and calls `IngestService.ingest(..., { channel: "mqtt" })`.
-  - MQTT-specific logs include:
+  - Logs:
     - `mqtt_message_received`
     - `mqtt_invalid_json`
     - `mqtt_unexpected_topic`
@@ -120,34 +123,276 @@ At this stage:
     - `mqtt_ingest_error`
   - Invalid MQTT messages are dropped safely with warning logs and do not impact the main process.
 
-- Persistence and environment:
-  - Local PostgreSQL 15 instance running in Docker (`iot_db` container) with the TimescaleDB extension enabled.
-  - Primary time-series table modeled as the `metric_readings` hypertable (partitioned on `ts`), with indexes tuned for device/metric lookups and chronological queries.
-  - Connection managed via a `pg` connection pool inside `TimeseriesStorageService`.
-  - Database and ingest configuration driven by environment variables:
-    - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
-    - `INGEST_API_KEY`
-    - `MQTT_BROKER_URL` (optional; defaults to `mqtt://127.0.0.1:1883` in local dev).
-  - Local MQTT broker (Mosquitto 2.x) running in Docker (`iot_mqtt` container), with config mounted from the project:
+### Storage module (time-series + rules engine integration)
+
+- **Time-series persistence** (`TimeseriesStorageService`):
+  - Connects to PostgreSQL using a dedicated `pg` `Pool`, configured via `DB_*` environment variables.
+  - Uses a TimescaleDB hypertable `metric_readings(device_id, metric_name, ts, value)` as the primary store for metric readings.
+  - Indexes:
+    - `(device_id, metric_name, ts DESC)` for device/metric range queries.
+    - `(ts DESC)` for global recent queries.
+  - Batch insert path:
+    - `insertReadings(readings: TimeseriesReading[])` performs a single multi-row parameterized `INSERT` for efficiency.
+
+- **Time-series queries**:
+  - `getReadingsForDeviceMetric(deviceId, metricName, from, to)`:
+    - Performs a parameterized `SELECT` on `metric_readings` filtered by device, metric and time range.
+    - Returns ordered time-series points (`ts ASC`).
+
+- **Rules engine integration point**:
+  - After a successful `INSERT` in `insertReadings(...)`, `TimeseriesStorageService`:
+    - Iterates over each persisted reading.
+    - Builds a `MetricEvaluationContext` `{ deviceId, metricName, value }`.
+    - Calls `RulesEngineService.evaluateForMetric(context)` for each reading.
+  - Errors from the rules engine do **not** break ingest:
+    - Failures are logged (`rules_engine_evaluation_error`) with device, metric and value.
+    - The original ingest path remains successful as long as the DB write succeeds.
+  - This guarantees that **both HTTP and MQTT ingest paths** automatically trigger rule evaluation without duplicating logic.
+
+### Metrics module
+
+- **`MetricsModule`**:
+  - Imports `StorageModule`.
+  - Exposes a read-only controller `MetricsController`.
+
+- **`MetricsController`**:
+  - Endpoint: `GET /metrics/:deviceId/:metricName?from=&to=`.
+  - Validates:
+    - `deviceId` as UUID v4.
+    - `metricName` as a non-empty string.
+    - `from` and `to` as ISO-8601 timestamps, with `from <= to`.
+  - Delegates to `TimeseriesStorageService.getReadingsForDeviceMetric(...)`.
+  - Response shape:
+    ```json
+    {
+      "device_id": "<uuid>",
+      "metric_name": "<metric>",
+      "points": [
+        { "ts": "<ISO-8601>", "value": 27.5 }
+      ]
+    }
+    ```
+
+This module satisfies the initial metrics query requirements and is used as a debugging and analysis tool for the rules engine.
+
+### Rules module (rules storage, engine and API)
+
+The Rules module implements the data model and runtime behavior specified for RF-11 (rule definition) and RF-12 (automatic evaluation).
+
+- **Domain model & persistence** (`Rule` entity + `RulesRepository`):
+  - Table `rules` with fields:
+    - `id UUID PRIMARY KEY`
+    - `device_id UUID`
+    - `metric_name TEXT`
+    - `rule_type ENUM('MAX','MIN','RANGE')`
+    - `min_value DOUBLE PRECISION NULL`
+    - `max_value DOUBLE PRECISION NULL`
+    - `enabled BOOLEAN`
+    - `created_at TIMESTAMP`
+  - `RulesRepository` uses a dedicated `pg` `Pool` injected via `RULES_PG_POOL`.
+  - Main methods:
+    - `findActiveByDeviceAndMetric(deviceId, metricName)`:
+      - Returns enabled rules for a given device + metric ordered by creation time.
+    - `findByDevice(deviceId)`:
+      - Returns all rules for a given device.
+    - `createRule({ deviceId, metricName, ruleType, minValue, maxValue, enabled })`:
+      - Generates a UUID `id` in the application layer.
+      - Inserts the rule row and returns the created `Rule` domain object.
+
+- **Pure rule evaluation function**:
+  - `shouldTriggerRule(rule: Rule, value: number): boolean`:
+    - `MAX`: triggers if `value > max_value`.
+    - `MIN`: triggers if `value < min_value`.
+    - `RANGE`: triggers if `value < min_value || value > max_value`.
+    - Safely handles null/undefined thresholds by returning `false`.
+
+- **Rules engine service** (`RulesEngineService`):
+  - Entry point: `evaluateForMetric(context: MetricEvaluationContext)`, where:
+    - `context = { deviceId: string, metricName: string, value: number }`.
+  - Behavior:
+    1. Looks up active rules via `RulesRepository.findActiveByDeviceAndMetric(...)`.
+    2. For each rule, calls `shouldTriggerRule(rule, value)`.
+    3. For every triggered rule:
+       - Calls `AlertsRepository.createAlert(...)` with `{ deviceId, metricName, ruleId, value }`.
+       - Logs a `warn` event:
+         - `msg: "Rule triggered, alert created"`
+         - Includes device, metric, ruleId, alertId, value, ruleType.
+    4. If alert creation fails:
+       - Logs an `error` event with the context and stack trace.
+  - This service is **stateless** in terms of rules evaluation (all state is in the DB), simplifying reasoning and testing.
+
+- **Rules HTTP API** (`RulesController`):
+  - DTO: `CreateRuleDto` with `class-validator` decorators:
+    - `device_id: string` (non-empty, UUID expected at usage sites).
+    - `metric_name: string` (non-empty).
+    - `rule_type: RuleType` (`MAX | MIN | RANGE`).
+    - `min_value?: number`
+    - `max_value?: number`
+    - `enabled?: boolean` (defaults to `true`).
+  - Endpoints:
+    - `POST /rules`
+      - Accepts a JSON body matching the `CreateRuleDto`.
+      - Normalizes `metric_name` to lowercase.
+      - Calls `RulesRepository.createRule(...)`.
+      - Returns the created `Rule` domain object.
+    - `GET /rules/:deviceId`
+      - Returns all rules for the given `deviceId` using `RulesRepository.findByDevice(...)`.
+
+This module provides the minimum viable surface to define and inspect rules per device, as required by the design.
+
+### Alerts module (alert lifecycle and API)
+
+The Alerts module implements RF-13 (alert generation), RF-14 (alert status) and RF-15 (alert query surface).
+
+- **Domain model & persistence** (`Alert` entity + `AlertsRepository`):
+  - Table `alerts` with fields:
+    - `id UUID PRIMARY KEY`
+    - `device_id UUID`
+    - `metric_name TEXT`
+    - `rule_id UUID`
+    - `value DOUBLE PRECISION`
+    - `status ENUM('ACTIVE','RESOLVED')`
+    - `triggered_at TIMESTAMP`
+    - `resolved_at TIMESTAMP NULL`
+  - `AlertsRepository` uses `pg` `Pool` injected via `ALERTS_PG_POOL`.
+  - Main methods:
+    - `createAlert({ deviceId, metricName, ruleId, value })`:
+      - Generates a UUID `id` in the application layer.
+      - Inserts a row with `status = 'ACTIVE'` and `triggered_at = now()`.
+      - Returns the created `Alert` domain object.
+    - `findByStatus(status?: AlertStatus)`:
+      - If status is omitted: returns all alerts ordered by `triggered_at DESC`.
+      - If status is provided (`ACTIVE` or `RESOLVED`): filters by that status.
+    - `resolveAlert(id: string, resolvedAt: Date = new Date())`:
+      - Sets `status = 'RESOLVED'` and `resolved_at = resolvedAt`.
+      - Returns the updated alert, or `null` if no alert was found.
+
+- **Alerts HTTP API** (`AlertsController`):
+  - Endpoints:
+    - `GET /alerts?status=ACTIVE|RESOLVED`:
+      - Optional `status` query string.
+      - Validates allowed values (`ACTIVE`, `RESOLVED`).
+      - Delegates to `AlertsRepository.findByStatus(...)`.
+      - Returns an array of `Alert` domain objects.
+    - `PATCH /alerts/:id/resolve`:
+      - Attempts to resolve an alert by ID via `AlertsRepository.resolveAlert(...)`.
+      - Returns the updated `Alert` on success.
+      - Returns HTTP `404` if no alert with that ID exists.
+
+The Alerts module is fully wired into the rules engine (`RulesEngineService` uses `AlertsRepository` directly) and exposes the basic read/resolve operations.
+
+### Auth and Devices modules
+
+- **Auth module**:
+  - API Key–based authentication for ingest:
+    - `ApiKeyService` checks the configured ingest API key.
+    - `ApiKeyAuthGuard` protects the `POST /ingest` endpoint.
+  - JWT-based user authentication and authorization (for dashboard / admin APIs) is still pending and reserved for future phases.
+
+- **Devices module**:
+  - Present as a NestJS module wired into the application.
+  - Device metadata and registration APIs (`/devices`) are defined in the Master Design Document but not yet implemented in code.
+  - For now, device identity is inferred from:
+    - `device_id` in the ingest payload/topic.
+    - Global ingest API key (no per-device token yet).
+
+### HTTP endpoints
+
+Implemented HTTP endpoints at this stage:
+
+- `GET /`  
+  Basic banner to confirm the API is running.
+
+- `GET /health`  
+  Simple JSON healthcheck with status and timestamp.
+
+- `POST /ingest`  
+  Authenticated ingest endpoint (API key) that:
+  - Validates payload structure and types.
+  - Normalizes metric names and timestamps.
+  - Persists readings into `metric_readings`.
+  - Triggers rule evaluation for each persisted reading.
+
+- `GET /metrics/:deviceId/:metricName?from=&to=`  
+  Read-only metrics endpoint:
+  - Returns ordered time-series points for the requested device/metric/time range.
+
+- `POST /rules`  
+  Creates a new rule for a device/metric (MAX/MIN/RANGE).
+
+- `GET /rules/:deviceId`  
+  Lists all rules defined for a given device.
+
+- `GET /alerts?status=ACTIVE|RESOLVED`  
+  Lists alerts, optionally filtered by status.
+
+- `PATCH /alerts/:id/resolve`  
+  Resolves an alert, changing its status from `ACTIVE` to `RESOLVED`.
+
+### Persistence and environment
+
+- **PostgreSQL + TimescaleDB**:
+  - Hypertable `metric_readings` as the central time-series storage.
+  - Relational tables `rules` and `alerts` for the rules/alerts domain.
+  - Connection pooling handled by `pg` `Pool` instances in:
+    - `TimeseriesStorageService`
+    - `RulesRepository`
+    - `AlertsRepository`
+
+- **Mosquitto MQTT broker**:
+  - Running in Docker (`iot_mqtt`).
+  - Configuration, data and logs mounted from the project:
     - `mosquitto/config/mosquitto.conf`
     - `mosquitto/data/`
     - `mosquitto/log/`
 
-- Tooling, tests and CI:
-  - TypeScript, Jest + ts-jest, and ESLint 9 + Prettier are configured and passing.
-  - Unit tests for `AppService` and `IngestService`.
-  - Unit tests for `MqttIngestListener` covering:
-    - Valid MQTT message path (happy path).
+### Tooling, tests and CI
+
+- **Tooling**:
+  - TypeScript.
+  - Jest + ts-jest.
+  - ESLint 9 + Prettier.
+  - GitHub Actions CI on Node 20:
+    - `npm ci`
+    - Lint
+    - Unit tests
+    - E2E tests
+    - Build.
+
+- **Unit tests**:
+  - `AppService` basic behavior.
+  - `IngestService` ingest pipeline behavior (normalization and delegation to storage).
+  - `MqttIngestListener` covering:
+    - Valid MQTT message (happy path).
     - Invalid JSON payload.
     - Invalid topic.
     - Invalid metrics payload.
-  - End-to-end tests for `POST /ingest` (happy path, missing API key, invalid payload).
-  - End-to-end tests for `GET /metrics/:deviceId/:metricName` covering:
-    - Happy path with data in the requested time range.
-    - Empty result set when the range does not contain data.
-    - Validation errors for missing or inconsistent `from` / `to` parameters.
-  - GitHub Actions CI runs on Node 20 with `npm ci`, lint, tests and build on pushes and PRs targeting `main`.
+  - `RulesEngineService`:
+    - `shouldTriggerRule` unit tests for:
+      - `MAX` rules (greater than threshold).
+      - `MIN` rules (less than threshold).
+      - `RANGE` rules (outside `[min, max]`).
+      - Null/undefined threshold edge cases.
 
-Future phases will extend this document with detailed data model diagrams,
-request/response flows per use case, and scalability considerations
-(particularly around MQTT ingest, alert fan-out, and time-series query patterns).
+- **End-to-end tests**:
+  - `POST /ingest`:
+    - Happy path (valid payload, authenticated) → `201` with `{ status: "ok", stored: N }`.
+    - Missing API key → `401`.
+    - Invalid payload (e.g. empty `metrics`) → `400`.
+  - `GET /metrics/:deviceId/:metricName`:
+    - Happy path with data in range.
+    - Empty result when the range does not contain data.
+    - Validation errors for missing or inconsistent `from` / `to`.
+  - Full ingest + rules + alerts pipeline:
+    - `POST /rules` creates a `MAX` rule for a device/metric.
+    - `POST /ingest` sends a metric that violates that rule.
+    - `GET /alerts?status=ACTIVE` returns at least one alert matching the device, metric and value.
+
+---
+
+Future phases will extend this document with:
+
+- Device registration and per-device API keys.
+- User authentication and authorization (JWT).
+- Additional business-level query APIs (devices, rules and alerts filtering, aggregations).
+- Observability endpoints (`/metrics` for Prometheus) and more detailed performance considerations.

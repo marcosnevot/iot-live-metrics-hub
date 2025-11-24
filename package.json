@@ -1,6 +1,6 @@
 {
   "name": "iot-live-metrics-hub",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Backend IoT for real-time metrics, alerts and analytics.",
   "private": true,
   "main": "dist/main.js",
