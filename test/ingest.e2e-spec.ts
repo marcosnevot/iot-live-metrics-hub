@@ -3,16 +3,31 @@ import { Test, TestingModule } from "@nestjs/testing";
 import * as request from "supertest";
 import { AppModule } from "../src/app.module";
 
-process.env.INGEST_API_KEY =
-  process.env.INGEST_API_KEY || "dev-api-key-change-me";
+// DB defaults for local/e2e
 process.env.DB_HOST = process.env.DB_HOST || "localhost";
 process.env.DB_PORT = process.env.DB_PORT || "5432";
 process.env.DB_USER = process.env.DB_USER || "postgres";
 process.env.DB_PASSWORD = process.env.DB_PASSWORD || "admin";
 process.env.DB_NAME = process.env.DB_NAME || "postgres";
 
+// Auth defaults for e2e (admin + analyst)
+process.env.JWT_SECRET = process.env.JWT_SECRET || "replace-with-local-jwt-secret";
+process.env.JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1h";
+process.env.ADMIN_USERNAME =
+  process.env.ADMIN_USERNAME || "admin@local.test";
+process.env.ADMIN_PASSWORD =
+  process.env.ADMIN_PASSWORD || "replace-with-admin-password";
+process.env.ANALYST_USERNAME =
+  process.env.ANALYST_USERNAME || "analyst@local.test";
+process.env.ANALYST_PASSWORD =
+  process.env.ANALYST_PASSWORD || "replace-with-analyst-password";
+
 describe("IngestController (e2e)", () => {
   let app: INestApplication;
+
+  let adminAccessToken: string;
+  let deviceId: string;
+  let deviceApiKey: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -33,6 +48,27 @@ describe("IngestController (e2e)", () => {
     );
 
     await app.init();
+
+    // 1) Login as admin to obtain a JWT for protected business APIs
+    const loginRes = await request(app.getHttpServer())
+      .post("/auth/login")
+      .send({
+        username: process.env.ADMIN_USERNAME,
+        password: process.env.ADMIN_PASSWORD,
+      })
+      .expect(201);
+
+    adminAccessToken = loginRes.body.accessToken as string;
+
+    // 2) Create a real device to get device_id + api_key for ingest
+    const deviceRes = await request(app.getHttpServer())
+      .post("/devices")
+      .set("Authorization", `Bearer ${adminAccessToken}`)
+      .send({ name: "e2e-ingest-device" })
+      .expect(201);
+
+    deviceId = deviceRes.body.id as string;
+    deviceApiKey = deviceRes.body.api_key as string;
   });
 
   afterAll(async () => {
@@ -42,12 +78,9 @@ describe("IngestController (e2e)", () => {
   it("should accept a valid payload and return ok status", async () => {
     const res = await request(app.getHttpServer())
       .post("/ingest")
-      .set(
-        "Authorization",
-        `Bearer ${process.env.INGEST_API_KEY as string}`,
-      )
+      .set("Authorization", `Bearer ${deviceApiKey}`)
       .send({
-        device_id: "550e8400-e29b-41d4-a716-446655440000",
+        device_id: deviceId,
         metrics: [
           { name: "temperature", value: 27.5, ts: "2025-01-01T12:00:00Z" },
           { name: "humidity", value: 40.1 },
@@ -62,32 +95,32 @@ describe("IngestController (e2e)", () => {
     await request(app.getHttpServer())
       .post("/ingest")
       .send({
-        device_id: "550e8400-e29b-41d4-a716-446655440000",
+        device_id: deviceId,
         metrics: [{ name: "temperature", value: 27.5 }],
       })
       .expect(401);
   });
 
   it("should return 400 when payload is invalid", async () => {
+    // En este caso queremos que pase el guard (API key + device_id correctos)
+    // y falle por validación del payload (metrics vacío).
     await request(app.getHttpServer())
       .post("/ingest")
-      .set(
-        "Authorization",
-        `Bearer ${process.env.INGEST_API_KEY as string}`,
-      )
+      .set("Authorization", `Bearer ${deviceApiKey}`)
       .send({
+        device_id: deviceId,
         metrics: [],
       })
       .expect(400);
   });
 
   it("should create an ACTIVE alert when a metric violates a MAX rule", async () => {
-    const deviceId = "11111111-2222-4444-8888-999999999999";
-    const metricName = "temperature";
+    const metricName = "temperature_e2e_rule";
 
-    // 1) Create a MAX rule via HTTP API
+    // 1) Create a MAX rule via HTTP API (protegido por JWT admin)
     const ruleRes = await request(app.getHttpServer())
       .post("/rules")
+      .set("Authorization", `Bearer ${adminAccessToken}`)
       .send({
         device_id: deviceId,
         metric_name: metricName,
@@ -104,13 +137,10 @@ describe("IngestController (e2e)", () => {
       enabled: true,
     });
 
-    // 2) Ingest a metric that violates the rule (value > max)
+    // 2) Ingest a metric that violates the rule (value > max) usando API key del dispositivo
     const ingestRes = await request(app.getHttpServer())
       .post("/ingest")
-      .set(
-        "Authorization",
-        `Bearer ${process.env.INGEST_API_KEY as string}`,
-      )
+      .set("Authorization", `Bearer ${deviceApiKey}`)
       .send({
         device_id: deviceId,
         metrics: [{ name: metricName, value: 35 }],
@@ -119,9 +149,10 @@ describe("IngestController (e2e)", () => {
 
     expect(ingestRes.body).toEqual({ status: "ok", stored: 1 });
 
-    // 3) Read ACTIVE alerts and verify that one alert matches our device/metric/value
+    // 3) Read ACTIVE alerts (protegido por JWT) y verificar que hay un alert que coincide
     const alertsRes = await request(app.getHttpServer())
       .get("/alerts")
+      .set("Authorization", `Bearer ${adminAccessToken}`)
       .query({ status: "ACTIVE" })
       .expect(200);
 

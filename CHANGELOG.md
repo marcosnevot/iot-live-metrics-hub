@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2025-11-25
+
+### Added
+
+- Observability & telemetry (F9 – Logging & Prometheus metrics):
+  - `ObservabilityModule` with:
+    - `ObservabilityService` owning a dedicated Prometheus `Registry`.
+    - `ObservabilityMetricsController` exposing `GET /metrics` in Prometheus text format (not part of the public Swagger surface).
+    - `HttpMetricsInterceptor` registered as a global interceptor to record HTTP request metrics.
+  - Prometheus metrics:
+    - `http_requests_total{method, path, status_code}` for per-route traffic and status codes.
+    - `iot_ingest_total{channel, result}` for ingest operations over HTTP and MQTT and their outcome.
+    - `iot_alerts_triggered_total{device_id, metric_name, rule_type}` for alerts emitted by the rules engine.
+    - `iot_processing_latency_ms{stage="ingest_pipeline"}` for end-to-end ingest pipeline latency.
+    - `iot_db_write_latency_ms{operation="insert_readings"}` for database write latency of time-series inserts.
+  - Default process and Node.js metrics collected via `prom-client` (`process_*`, `nodejs_*`).
+
+### Changed
+
+- Logging:
+  - Enriched structured logs across ingest, rules engine, alerts, auth, devices and metrics modules with consistent fields (`module`, `operation`, `status`, domain identifiers).
+  - Updated `LoggerModule` configuration to redact sensitive information from logs:
+    - Authorization and API key headers.
+    - Cookies.
+    - Passwords and token-like fields in request bodies.
+- Documentation:
+  - `ARCHITECTURE.md` updated to reflect DEC-04 as implemented (JSON logs + Prometheus `/metrics`), including:
+    - Observability module and `/metrics` endpoint.
+    - Domain-level Prometheus metrics and their label sets.
+    - Cardinality control considerations for monitoring.
+
 ## [0.8.0] - 2025-11-25
 
 ### Added

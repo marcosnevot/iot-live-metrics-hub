@@ -5,10 +5,12 @@ import {
   TimeseriesReading,
 } from "../storage/timeseries-storage.service";
 import { IngestRequestDto } from "./dto/ingest-request.dto";
+import { ObservabilityService } from "../observability/metrics.service";
 
 describe("IngestService", () => {
   let service: IngestService;
   let storage: TimeseriesStorageService;
+  let observability: ObservabilityService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -20,11 +22,20 @@ describe("IngestService", () => {
             insertReadings: jest.fn().mockResolvedValue(undefined),
           },
         },
+        {
+          provide: ObservabilityService,
+          useValue: {
+            incrementIngestTotal: jest.fn(),
+            observeDbWriteLatency: jest.fn(),
+            observeProcessingLatency: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<IngestService>(IngestService);
     storage = module.get<TimeseriesStorageService>(TimeseriesStorageService);
+    observability = module.get<ObservabilityService>(ObservabilityService);
   });
 
   it("debería persistir todas las métricas y devolver el número", async () => {
@@ -40,6 +51,7 @@ describe("IngestService", () => {
 
     expect(result).toBe(2);
     expect(storage.insertReadings).toHaveBeenCalledTimes(1);
+
     const arg = (storage.insertReadings as jest.Mock).mock
       .calls[0][0] as TimeseriesReading[];
 
@@ -54,6 +66,11 @@ describe("IngestService", () => {
       metricName: "humidity",
       value: 40.1,
     });
+
+    // Optional: verify observability call on success
+    expect(
+      (observability.incrementIngestTotal as jest.Mock).mock.calls,
+    ).toContainEqual(["http", "success"]);
   });
 
   it("debería propagar el error si falla el almacenamiento", async () => {
@@ -67,5 +84,10 @@ describe("IngestService", () => {
     };
 
     await expect(service.ingest(request)).rejects.toThrow("db down");
+
+    // Optional: verify observability call on error
+    expect(
+      (observability.incrementIngestTotal as jest.Mock).mock.calls,
+    ).toContainEqual(["http", "error"]);
   });
 });

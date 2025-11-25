@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Controller,
   Get,
+  Logger,
   NotFoundException,
   Param,
   Patch,
@@ -30,6 +31,8 @@ import { GetAlertsQueryDto } from "./dto/get-alerts-query.dto";
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller("alerts")
 export class AlertsController {
+  private readonly logger = new Logger(AlertsController.name);
+
   constructor(private readonly alertsRepository: AlertsRepository) {}
 
   @Get()
@@ -103,18 +106,59 @@ export class AlertsController {
     }
 
     if (parsedFrom && parsedTo && parsedFrom > parsedTo) {
+      this.logger.warn({
+        module: "alerts",
+        operation: "list_alerts",
+        status: "error",
+        reason: '"from" is later than "to"',
+        filters: {
+          status,
+          deviceId: normalizedDeviceId,
+          metricName: normalizedMetricName,
+          from,
+          to,
+        },
+      });
+
       throw new BadRequestException(
         '"from" must be earlier than or equal to "to".',
       );
     }
 
-    return this.alertsRepository.findByCriteria({
+    this.logger.log({
+      module: "alerts",
+      operation: "list_alerts",
+      status: "requested",
+      filters: {
+        status,
+        deviceId: normalizedDeviceId,
+        metricName: normalizedMetricName,
+        from,
+        to,
+      },
+    });
+
+    const alerts = await this.alertsRepository.findByCriteria({
       status,
       deviceId: normalizedDeviceId,
       metricName: normalizedMetricName,
       from: parsedFrom,
       to: parsedTo,
     });
+
+    this.logger.log({
+      module: "alerts",
+      operation: "list_alerts",
+      status: "success",
+      resultCount: alerts.length,
+      filters: {
+        status,
+        deviceId: normalizedDeviceId,
+        metricName: normalizedMetricName,
+      },
+    });
+
+    return alerts;
   }
 
   @Patch(":id/resolve")
@@ -131,11 +175,32 @@ export class AlertsController {
   })
   @Roles("admin")
   async resolveAlert(@Param("id") id: string): Promise<Alert> {
+    this.logger.log({
+      module: "alerts",
+      operation: "resolve_alert",
+      alertId: id,
+      status: "requested",
+    });
+
     const updated = await this.alertsRepository.resolveAlert(id);
 
     if (!updated) {
+      this.logger.warn({
+        module: "alerts",
+        operation: "resolve_alert",
+        alertId: id,
+        status: "not_found",
+      });
+
       throw new NotFoundException(`Alert with id ${id} not found`);
     }
+
+    this.logger.log({
+      module: "alerts",
+      operation: "resolve_alert",
+      alertId: id,
+      status: "resolved",
+    });
 
     return updated;
   }

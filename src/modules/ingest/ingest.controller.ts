@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Logger, Post, UseGuards } from "@nestjs/common";
 import {
   ApiBadRequestResponse,
   ApiBody,
@@ -16,6 +16,8 @@ import { IngestResponseDto } from "./dto/ingest-response.dto";
 @ApiTags("Ingest")
 @Controller()
 export class IngestController {
+  private readonly logger = new Logger(IngestController.name);
+
   constructor(private readonly ingestService: IngestService) {}
 
   @UseGuards(ApiKeyAuthGuard)
@@ -41,7 +43,25 @@ export class IngestController {
     description: "Missing or invalid API key.",
   })
   async ingest(@Body() body: IngestRequestDto): Promise<IngestResponseDto> {
+    this.logger.log({
+      module: "ingest",
+      operation: "http_ingest",
+      channel: "http",
+      deviceId: body.device_id,
+      metricsCount: body.metrics.length,
+      status: "received",
+    });
+
     const stored = await this.ingestService.ingest(body);
+
+    this.logger.log({
+      module: "ingest",
+      operation: "http_ingest",
+      channel: "http",
+      deviceId: body.device_id,
+      metricsCount: stored,
+      status: "success",
+    });
 
     return {
       status: "ok",

@@ -1,12 +1,25 @@
-import { INestApplication } from "@nestjs/common";
+import { INestApplication, ValidationPipe } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import * as request from "supertest";
 import { Pool } from "pg";
 import { AppModule } from "../src/app.module";
 
+// Auth defaults for e2e
+process.env.JWT_SECRET = process.env.JWT_SECRET || "replace-with-local-jwt-secret";
+process.env.JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1h";
+process.env.ADMIN_USERNAME =
+  process.env.ADMIN_USERNAME || "replace-with-admin-password";
+process.env.ADMIN_PASSWORD =
+  process.env.ADMIN_PASSWORD || "change-me-admin";
+process.env.ANALYST_USERNAME =
+  process.env.ANALYST_USERNAME || "analyst@local.test";
+process.env.ANALYST_PASSWORD =
+  process.env.ANALYST_PASSWORD || "replace-with-analyst-password";
+
 describe("MetricsController (e2e)", () => {
   let app: INestApplication;
   let pool: Pool;
+  let adminAccessToken: string;
 
   const deviceId = "550e8400-e29b-41d4-a716-446655440000";
   const metricName = "temperature_e2e";
@@ -26,7 +39,30 @@ describe("MetricsController (e2e)", () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+        transformOptions: {
+          enableImplicitConversion: true,
+        },
+      }),
+    );
+
     await app.init();
+
+    // Login as admin to obtain JWT for metrics API
+    const loginRes = await request(app.getHttpServer())
+      .post("/auth/login")
+      .send({
+        username: process.env.ADMIN_USERNAME,
+        password: process.env.ADMIN_PASSWORD,
+      })
+      .expect(201);
+
+    adminAccessToken = loginRes.body.accessToken as string;
   });
 
   afterAll(async () => {
@@ -55,6 +91,7 @@ describe("MetricsController (e2e)", () => {
 
     const response = await request(app.getHttpServer())
       .get(`/metrics/${deviceId}/${metricName}`)
+      .set("Authorization", `Bearer ${adminAccessToken}`)
       .query({ from, to })
       .expect(200);
 
@@ -77,8 +114,10 @@ describe("MetricsController (e2e)", () => {
     const from = "2025-11-24T13:00:00Z";
     const to = "2025-11-24T14:00:00Z";
 
+    // Dejamos en la tabla solo el punto a las 12:30, así este rango queda vacío
     const response = await request(app.getHttpServer())
       .get(`/metrics/${deviceId}/${metricName}`)
+      .set("Authorization", `Bearer ${adminAccessToken}`)
       .query({ from, to })
       .expect(200);
 
@@ -92,6 +131,7 @@ describe("MetricsController (e2e)", () => {
   it("fails with 400 when from/to are missing", async () => {
     const res = await request(app.getHttpServer())
       .get(`/metrics/${deviceId}/${metricName}`)
+      .set("Authorization", `Bearer ${adminAccessToken}`)
       .expect(400);
 
     expect(res.body.message).toContain(
@@ -105,6 +145,7 @@ describe("MetricsController (e2e)", () => {
 
     const res = await request(app.getHttpServer())
       .get(`/metrics/${deviceId}/${metricName}`)
+      .set("Authorization", `Bearer ${adminAccessToken}`)
       .query({ from, to })
       .expect(400);
 

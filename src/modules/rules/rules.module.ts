@@ -4,9 +4,10 @@ import { RULES_PG_POOL, RulesRepository } from "./rules.repository";
 import { AlertsModule } from "../alerts/alerts.module";
 import { RulesEngineService } from "./rules-engine.service";
 import { RulesController } from "./rules.controller";
+import { ObservabilityModule } from "../observability/observability.module";
 
 @Module({
-  imports: [AlertsModule],
+  imports: [AlertsModule, ObservabilityModule],
   controllers: [RulesController],
   providers: [
     {

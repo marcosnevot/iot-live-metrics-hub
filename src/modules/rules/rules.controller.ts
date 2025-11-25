@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Logger,
+  Param,
+  Post,
+  UseGuards,
+} from "@nestjs/common";
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -21,6 +29,8 @@ import { Roles } from "../auth/roles.decorator";
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller("rules")
 export class RulesController {
+  private readonly logger = new Logger(RulesController.name);
+
   constructor(private readonly rulesRepository: RulesRepository) {}
 
   @Post()
@@ -40,6 +50,16 @@ export class RulesController {
   async createRule(@Body() body: CreateRuleDto): Promise<Rule> {
     const ruleType = body.rule_type;
 
+    this.logger.log({
+      module: "rules",
+      operation: "create_rule",
+      deviceId: body.device_id,
+      metricName: body.metric_name?.toLowerCase(),
+      ruleType,
+      enabled: body.enabled ?? true,
+      status: "requested",
+    });
+
     const created = await this.rulesRepository.createRule({
       deviceId: body.device_id,
       metricName: body.metric_name.toLowerCase(),
@@ -47,6 +67,17 @@ export class RulesController {
       minValue: body.min_value !== undefined ? Number(body.min_value) : null,
       maxValue: body.max_value !== undefined ? Number(body.max_value) : null,
       enabled: body.enabled ?? true,
+    });
+
+    this.logger.log({
+      module: "rules",
+      operation: "create_rule",
+      deviceId: created.deviceId,
+      metricName: created.metricName,
+      ruleId: created.id,
+      ruleType: created.ruleType,
+      enabled: created.enabled,
+      status: "success",
     });
 
     return created;
@@ -71,6 +102,23 @@ export class RulesController {
   async getRulesForDevice(
     @Param("deviceId") deviceId: string,
   ): Promise<Rule[]> {
-    return this.rulesRepository.findByDevice(deviceId);
+    this.logger.log({
+      module: "rules",
+      operation: "list_rules_for_device",
+      deviceId,
+      status: "requested",
+    });
+
+    const rules = await this.rulesRepository.findByDevice(deviceId);
+
+    this.logger.log({
+      module: "rules",
+      operation: "list_rules_for_device",
+      deviceId,
+      rulesCount: rules.length,
+      status: "success",
+    });
+
+    return rules;
   }
 }
