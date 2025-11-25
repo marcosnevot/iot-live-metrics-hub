@@ -62,11 +62,30 @@ export class RulesEngineService {
   async evaluateForMetric(context: MetricEvaluationContext): Promise<void> {
     const { deviceId, metricName, value } = context;
 
+    this.logger.debug({
+      module: "rules_engine",
+      operation: "evaluate_metric",
+      deviceId,
+      metricName,
+      value,
+      status: "start",
+    });
+
     // Fetch active rules for this device and metric
     const rules = await this.rulesRepository.findActiveByDeviceAndMetric(
       deviceId,
       metricName,
     );
+
+    this.logger.debug({
+      module: "rules_engine",
+      operation: "evaluate_metric",
+      deviceId,
+      metricName,
+      value,
+      activeRulesCount: rules.length,
+      status: rules.length === 0 ? "no_active_rules" : "rules_loaded",
+    });
 
     if (rules.length === 0) {
       return;
@@ -83,8 +102,26 @@ export class RulesEngineService {
     }
 
     if (triggeredRules.length === 0) {
+      this.logger.debug({
+        module: "rules_engine",
+        operation: "evaluate_metric",
+        deviceId,
+        metricName,
+        value,
+        status: "no_rules_triggered",
+      });
       return;
     }
+
+    this.logger.warn({
+      module: "rules_engine",
+      operation: "evaluate_metric",
+      deviceId,
+      metricName,
+      value,
+      triggeredRulesCount: triggeredRules.length,
+      status: "rules_triggered",
+    });
 
     // Persist alerts for all triggered rules
     const createAlertPromises = triggeredRules.map((rule) =>
@@ -97,27 +134,29 @@ export class RulesEngineService {
         })
         .then((alert) => {
           this.logger.warn({
-            msg: "Rule triggered, alert created",
+            module: "rules_engine",
+            operation: "create_alert",
             deviceId,
             metricName,
             ruleId: rule.id,
             alertId: alert.id,
             value,
             ruleType: rule.ruleType,
+            status: "alert_created",
           });
         })
-        .catch((error) => {
-          this.logger.error(
-            {
-              msg: "Failed to create alert for triggered rule",
-              deviceId,
-              metricName,
-              ruleId: rule.id,
-              value,
-              ruleType: rule.ruleType,
-            },
-            error.stack,
-          );
+        .catch((error: Error) => {
+          this.logger.error({
+            module: "rules_engine",
+            operation: "create_alert",
+            deviceId,
+            metricName,
+            ruleId: rule.id,
+            value,
+            ruleType: rule.ruleType,
+            status: "error",
+            reason: error.message,
+          });
         }),
     );
 
