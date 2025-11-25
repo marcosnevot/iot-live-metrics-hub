@@ -54,4 +54,3 @@ import { ObservabilityModule } from "./modules/observability/observability.modul
   providers: [AppService],
 })
 export class AppModule {}
-
