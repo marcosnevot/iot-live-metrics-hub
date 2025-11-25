@@ -4,6 +4,59 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2025-11-24
+
+### Added
+
+- Business APIs & Swagger (F7 – Business APIs & API documentation):
+  - Devices domain and storage:
+    - `devices` table in PostgreSQL for device catalog and per-device API keys:
+      - `id UUID PRIMARY KEY`, `name TEXT`, `api_key TEXT`,
+        `active BOOLEAN`, `created_at TIMESTAMPTZ`, `updated_at TIMESTAMPTZ`.
+    - `DevicesRepository` using `pg.Pool` and generating UUIDs and strong API keys
+      in the application layer.
+    - `DevicesModule` and `DevicesController` with:
+      - `GET /devices` to list all registered devices without exposing API keys.
+      - `POST /devices` to register a new device and return its `id` and `api_key`
+        (API key is only returned at creation time).
+  - API documentation with Swagger / OpenAPI:
+    - `@nestjs/swagger` + `swagger-ui-express` configured in `main.ts`.
+    - HTTP API documentation exposed at `GET /docs`.
+    - Tags defined for `App`, `Ingest`, `Metrics`, `Rules`, `alerts` and `devices`.
+    - DTOs and response schemas documented for:
+      - Root and health endpoints (`GET /`, `GET /health`).
+      - Ingest (`POST /ingest`).
+      - Metrics (`GET /metrics/:deviceId/:metricName`).
+      - Rules (`POST /rules`, `GET /rules/:deviceId`).
+      - Alerts (`GET /alerts`, `PATCH /alerts/:id/resolve`).
+      - Devices (`GET /devices`, `POST /devices`).
+
+### Changed
+
+- Alerts query surface (F7 – Alerts filters):
+  - `AlertsRepository` now exposes a `findByCriteria({ status, deviceId, metricName, from, to })`
+    method that builds a parameterized query with optional filters and orders results
+    by `triggered_at DESC`.
+  - `findByStatus(status?: AlertStatus)` is now a thin wrapper around `findByCriteria`
+    to keep backwards compatibility.
+  - `AlertsController` `GET /alerts` extended to support optional filters:
+    - `status` (`ACTIVE` | `RESOLVED`),
+    - `device_id` (UUID),
+    - `metric_name`,
+    - `from` / `to` (ISO-8601 range on `triggered_at`),
+    with validation for allowed values and consistent time ranges.
+- Metrics API:
+  - `MetricsController` response for `GET /metrics/:deviceId/:metricName?from=&to=`
+    is now explicitly modeled and documented in Swagger as:
+    - `{ "device_id", "metric_name", "points": [{ "ts", "value" }] }`,
+    without changing the existing behavior.
+- Documentation and architecture:
+  - `ARCHITECTURE.md` updated to include:
+    - Devices module as implemented (table, repository and HTTP APIs).
+    - Extended alerts query capabilities with filters.
+    - Presence of the Swagger/OpenAPI surface (`GET /docs`) and the `api-key`
+      security scheme for ingest.
+
 ## [0.6.0] - 2025-11-24
 
 ### Added

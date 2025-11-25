@@ -1,9 +1,10 @@
 import { Module } from "@nestjs/common";
+import { DevicesRepository } from "./devices.repository";
+import { DevicesController } from "./devices.controller";
 
 @Module({
-  imports: [],
-  controllers: [],
-  providers: [],
-  exports: [],
+  controllers: [DevicesController],
+  providers: [DevicesRepository],
+  exports: [DevicesRepository],
 })
 export class DevicesModule {}

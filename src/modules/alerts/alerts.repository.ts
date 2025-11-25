@@ -5,6 +5,14 @@ import { Alert, AlertStatus } from "./alert.entity";
 
 export const ALERTS_PG_POOL = "ALERTS_PG_POOL";
 
+interface AlertSearchCriteria {
+  status?: AlertStatus;
+  deviceId?: string;
+  metricName?: string;
+  from?: Date;
+  to?: Date;
+}
+
 @Injectable()
 export class AlertsRepository {
   private readonly logger = new Logger(AlertsRepository.name);
@@ -52,29 +60,56 @@ export class AlertsRepository {
     return this.mapRowToAlert(result.rows[0]);
   }
 
-  async findByStatus(status?: AlertStatus): Promise<Alert[]> {
-    if (!status) {
-      const result = await this.pool.query(
-        `
-        SELECT id, device_id, metric_name, rule_id, value, status, triggered_at, resolved_at
-        FROM alerts
-        ORDER BY triggered_at DESC
-        `,
-      );
-      return result.rows.map((row) => this.mapRowToAlert(row));
+  async findByCriteria(criteria: AlertSearchCriteria): Promise<Alert[]> {
+    const { status, deviceId, metricName, from, to } = criteria;
+
+    const conditions: string[] = [];
+    const params: any[] = [];
+    let index = 1;
+
+    if (status) {
+      conditions.push(`status = $${index++}`);
+      params.push(status);
     }
 
-    const result = await this.pool.query(
-      `
+    if (deviceId) {
+      conditions.push(`device_id = $${index++}`);
+      params.push(deviceId);
+    }
+
+    if (metricName) {
+      conditions.push(`metric_name = $${index++}`);
+      params.push(metricName);
+    }
+
+    if (from) {
+      conditions.push(`triggered_at >= $${index++}`);
+      params.push(from.toISOString());
+    }
+
+    if (to) {
+      conditions.push(`triggered_at <= $${index++}`);
+      params.push(to.toISOString());
+    }
+
+    let query = `
       SELECT id, device_id, metric_name, rule_id, value, status, triggered_at, resolved_at
       FROM alerts
-      WHERE status = $1
-      ORDER BY triggered_at DESC
-      `,
-      [status],
-    );
+    `;
 
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(" AND ")}`;
+    }
+
+    query += " ORDER BY triggered_at DESC";
+
+    const result = await this.pool.query(query, params);
     return result.rows.map((row) => this.mapRowToAlert(row));
+  }
+
+  async findByStatus(status?: AlertStatus): Promise<Alert[]> {
+    // Backwards-compatible wrapper used by legacy code/tests.
+    return this.findByCriteria({ status });
   }
 
   async resolveAlert(
