@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Pool } from "pg";
 import { randomBytes, randomUUID } from "crypto";
 import { Device } from "./device.entity";
+import { hashDeviceApiKey } from "./device-api-key.util";
 
 @Injectable()
 export class DevicesRepository {
@@ -30,10 +31,29 @@ export class DevicesRepository {
     return result.rows.map((row) => this.mapRowToDevice(row));
   }
 
-  async createDevice(name: string): Promise<Device> {
+  async findById(id: string): Promise<Device | null> {
+    const result = await this.pool.query(
+      `
+      SELECT id, name, api_key, active, created_at, updated_at
+      FROM devices
+      WHERE id = $1
+      `,
+      [id],
+    );
+
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    return this.mapRowToDevice(result.rows[0]);
+  }
+
+  async createDevice(
+    name: string,
+  ): Promise<{ device: Device; apiKeyPlain: string }> {
     const id = randomUUID();
-    // Strong API key generation; hardening (hashing, rotation, binding) coming in F8.
-    const apiKey = randomBytes(32).toString("hex");
+    const apiKeyPlain = randomBytes(32).toString("hex");
+    const apiKeyHash = hashDeviceApiKey(apiKeyPlain);
     const active = true;
     const now = new Date();
 
@@ -43,7 +63,7 @@ export class DevicesRepository {
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING id, name, api_key, active, created_at, updated_at
       `,
-      [id, name, apiKey, active, now, now],
+      [id, name, apiKeyHash, active, now, now],
     );
 
     const device = this.mapRowToDevice(result.rows[0]);
@@ -53,7 +73,7 @@ export class DevicesRepository {
       name: device.name,
     });
 
-    return device;
+    return { device, apiKeyPlain };
   }
 
   private mapRowToDevice(row: any): Device {

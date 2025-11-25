@@ -9,7 +9,11 @@ IoT Live Metrics Hub is a monolithic NestJS backend designed to:
 - Evaluate simple alert rules (MIN / MAX / RANGE) on each reading.
 - Persist alerts with status and lifecycle.
 - Expose business APIs for querying metrics, rules, alerts and devices.
-- Register devices and provision per-device API keys (for now only generated and returned on creation; ingest still uses a single global API key).
+- Register devices and provision per-device API keys, using:
+  - Strong random API keys generated per device.
+  - Hashed storage of API keys in the `devices` table.
+  - Binding between `device_id` and API key for ingest.
+- Authenticate human users via JWT with simple roles (`admin`, `analyst`) to protect business APIs.
 
 The system is implemented as a modular monolith prepared for a
 future split into services if needed.
@@ -42,14 +46,30 @@ future split into services if needed.
 
 - **Devices module**
   - Device registration and catalog, backed by the `devices` table.
-  - HTTP APIs for listing and creating devices (`GET /devices`, `POST /devices`), including per-device API key provisioning (API keys are generated and stored, and only returned once at creation time). The ingest pipeline still uses a single global API key from environment variables.
+  - HTTP APIs for listing and creating devices (`GET /devices`, `POST /devices`).
+  - Per-device API key provisioning:
+    - API keys are generated server-side with high entropy.
+    - Only the raw API key is returned once at creation time.
+    - The `devices.api_key` column stores a SHA-256 hash of the API key, never the raw value.
+  - Business APIs are protected with JWT and role-based access:
+    - `GET /devices` is accessible to `admin` and `analyst`.
+    - `POST /devices` is restricted to `admin`.
 
 - **Auth module**
-  - API Key–based authentication for ingest requests.
-  - JWT-based user authentication is specified at design level but not yet implemented in code.
+  - API Key–based authentication for ingest requests, using per-device API keys:
+    - HTTP ingest requires `Authorization: Bearer <device_api_key>` plus a valid `device_id` in the request body.
+    - The API key is validated against the hashed value stored in the `devices` table.
+    - Legacy devices (created before hashing) are still supported by comparing raw values as a fallback.
+  - JWT-based user authentication for business APIs:
+    - `POST /auth/login` issues a signed JWT (HS256) using `JWT_SECRET`.
+    - Users and roles (`admin`, `analyst`) are configured via environment variables.
+    - A `JwtAuthGuard` and `RolesGuard` enforce access control on business endpoints.
 
-  - **API documentation**
-  - OpenAPI/Swagger documentation exposed at `/docs`, covering App, Ingest, Metrics, Rules, Alerts and Devices APIs, including the `api-key` security scheme for ingest endpoints.
+- **API documentation**
+  - OpenAPI/Swagger documentation exposed at `/docs`, covering App, Ingest, Metrics, Rules, Alerts and Devices APIs.
+  - Security schemes:
+    - API key scheme for device ingest (`Authorization: Bearer <device_api_key>`).
+    - Bearer JWT scheme for business APIs (`Authorization: Bearer <access_token>`).
 
 
 ## Key technical decisions (DEC)
@@ -64,7 +84,7 @@ future split into services if needed.
 - **DEC-08** – No local shell scripts; only standalone commands.
 - **DEC-09** – Strict alignment with the corporate Git/GitHub guide.
 
-## Implementation status (release 0.7.0 – F3 HTTP ingest + F4 MQTT ingest + F5 Time-Series Storage + F6 Rules Engine & Alerts + F7 Business APIs & Swagger)
+## Implementation status (release 0.8.0 – F3 HTTP ingest + F4 MQTT ingest + F5 Time-Series Storage + F6 Rules Engine & Alerts + F7 Business APIs & Swagger + F8 Security)
 
 At this stage, the backend implements the following:
 
@@ -82,20 +102,29 @@ At this stage, the backend implements the following:
   - API key security scheme (`api-key`) configured for ingest endpoints.
 
 - Environment and configuration:
-  - Ingest and database configuration driven by environment variables:
-    - `INGEST_API_KEY`
+  - Database and ingest configuration driven by environment variables:
     - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
     - `MQTT_BROKER_URL` (optional; defaults to `mqtt://127.0.0.1:1883` in local dev).
-  - Local PostgreSQL 15 + TimescaleDB in Docker (`iot_db` container).
-  - Local Mosquitto broker in Docker (`iot_mqtt` container) with project-local config and data.
+  - Device authentication configuration:
+    - Per-device API keys are stored hashed in the `devices` table; there is no longer a single global ingest API key.
+  - User authentication configuration (JWT):
+    - `JWT_SECRET` – secret used to sign JWTs (HS256).
+    - `JWT_EXPIRES_IN` – token lifetime (e.g. `1h`).
+    - `ADMIN_USERNAME`, `ADMIN_PASSWORD` – credentials for the admin user.
+    - `ANALYST_USERNAME`, `ANALYST_PASSWORD` – credentials for the analyst user.
 
 ### Ingest module
 
 - **HTTP ingest** (`IngestModule` + `IngestController` + `IngestService`):
   - Real HTTP endpoint `POST /ingest` implemented according to the Master Design Document.
   - Request/response contracts modeled with DTOs (`IngestRequestDto`, `MetricDto`) and validated via `class-validator` / `class-transformer`.
-  - Device-side API key authentication for ingest using `ApiKeyAuthGuard` + `ApiKeyService`, expecting header:
-    - `Authorization: Bearer <INGEST_API_KEY>`.
+  - Device-side API key authentication for ingest using `ApiKeyAuthGuard` + `ApiKeyService`, expecting:
+    - `Authorization: Bearer <device_api_key>` header.
+    - A valid `device_id` field in the JSON body.
+  - `ApiKeyService` validates the API key by:
+    - Looking up the device by `device_id` in the `devices` table.
+    - Verifying that the device is active.
+    - Comparing the SHA-256 hash of the provided API key against the stored `devices.api_key` value, with a fallback to plain-text comparison for legacy rows.
   - `IngestService.ingest(...)`:
     - Normalizes metric names to lowercase.
     - Normalizes timestamps (uses metric timestamp if provided, otherwise “now”).
@@ -280,20 +309,22 @@ The Alerts module implements RF-13 (alert generation), RF-14 (alert status) and 
 
 - **Alerts HTTP API** (`AlertsController`):
   - Endpoints:
-    - `GET /alerts`:
-      - Supports the following optional query parameters:
-        - `status`: `ACTIVE` | `RESOLVED`.
-        - `device_id`: UUID of the device associated with the alert.
-        - `metric_name`: metric name associated with the alert.
-        - `from`, `to`: ISO-8601 timestamps defining the time range for `triggered_at`.
-      - Validates allowed values for `status`.
-      - Ensures that, when both `from` and `to` are provided, `from <= to` and both are valid ISO-8601 timestamps.
+    - `GET /alerts`
+      - Protected with JWT and roles:
+        - Accessible to `admin` and `analyst`.
+      - Uses a dedicated query DTO `GetAlertsQueryDto` with `class-validator` to validate filters:
+        - `status`: `ACTIVE` | `RESOLVED` (enum).
+        - `device_id`: UUID v4.
+        - `metric_name`: optional string.
+        - `from`, `to`: ISO-8601 timestamps.
+      - Ensures that, when both `from` and `to` are provided, `from <= to`.
       - Delegates to `AlertsRepository.findByCriteria(...)`.
-      - Returns an array of `Alert` domain objects.
+      - Returns an array of `Alert` domain objects ordered by `triggered_at DESC`.
     - `PATCH /alerts/:id/resolve`:
       - Attempts to resolve an alert by ID via `AlertsRepository.resolveAlert(...)`.
       - Returns the updated `Alert` on success.
       - Returns HTTP `404` if no alert with that ID exists.
+      - Protected with JWT; only users with the `admin` role are allowed to resolve alerts.
   - The alerts API is fully documented in Swagger under the `alerts` tag, including query parameters and response schema.
 
 The Alerts module is fully wired into the rules engine (`RulesEngineService` uses `AlertsRepository` directly) and exposes the basic read/resolve operations.
@@ -301,63 +332,116 @@ The Alerts module is fully wired into the rules engine (`RulesEngineService` use
 ### Auth and Devices modules
 
 - **Auth module**:
-  - API Key–based authentication for ingest:
-    - `ApiKeyService` checks the configured ingest API key.
-    - `ApiKeyAuthGuard` protects the `POST /ingest` endpoint.
-  - JWT-based user authentication and authorization (for dashboard / admin APIs) is still pending and reserved for future phases.
+  - Provides two authentication mechanisms:
+    - Device authentication for ingest:
+      - `ApiKeyService` validates per-device API keys against the `devices` table.
+      - `ApiKeyAuthGuard` protects `POST /ingest`, enforcing:
+        - `Authorization: Bearer <device_api_key>` header.
+        - A valid `device_id` in the request body that matches an active device.
+    - User authentication for business APIs:
+      - `AuthController` exposes `POST /auth/login`, which:
+        - Accepts username/password credentials.
+        - Validates them against in-memory users configured via:
+          - `ADMIN_USERNAME`, `ADMIN_PASSWORD`
+          - `ANALYST_USERNAME`, `ANALYST_PASSWORD`
+        - Issues a signed JWT (`HS256`) using `JWT_SECRET` and `JWT_EXPIRES_IN`.
+      - `JwtStrategy` decodes and validates incoming tokens, attaching a user object (username + role) to the request.
+      - `JwtAuthGuard` and `RolesGuard` work together to protect business endpoints by role.
+  - Roles:
+    - `admin`:
+      - Full access to device management, rule creation and alert resolution.
+    - `analyst`:
+      - Read-only access to devices, rules, alerts and metrics.
 
 - **Devices module**:
   - Implemented as a NestJS module wired into the application with its own repository and controller.
-  - Device metadata is persisted in the `devices` table (`id`, `name`, `api_key`, `active`, `created_at`, `updated_at`).
+  - Device metadata is persisted in the `devices` table (`id`, `name`, `api_key`, `active`, `created_at`, `updated_at`), where:
+    - `api_key` stores a SHA-256 hash of the device API key for security reasons.
   - HTTP APIs implemented:
-    - `GET /devices` → lists all registered devices without exposing API keys.
-    - `POST /devices` → registers a new device and returns its `id` and `api_key` (the API key is only returned at creation time and then stored).
-  - The ingest pipeline still infers device identity from the `device_id` field/topic and uses a single global ingest API key configured via environment variables; per-device keys are not yet enforced at ingest time.
+    - `GET /devices`
+      - Lists all registered devices in a `DeviceResponseDto[]`.
+      - Does not expose any API key.
+      - Protected with JWT; accessible to `admin` and `analyst`.
+    - `POST /devices`
+      - Registers a new device from a validated `CreateDeviceDto`.
+      - Generates a random API key, stores its hash and returns the raw API key once in a `DeviceCreatedResponseDto`.
+      - Protected with JWT; restricted to `admin`.
+  - The ingest pipeline identifies the device using the `device_id` present in the payload (or MQTT topic) and validates the API key against the stored hash in the `devices` table.
 
 ### HTTP endpoints
 
 Implemented HTTP endpoints at this stage:
 
-- `GET /`  
+- `GET /`
   Basic banner to confirm the API is running.
 
-- `GET /health`  
+- `GET /health`
   Simple JSON healthcheck with status and timestamp.
 
-- `POST /ingest`  
-  Authenticated ingest endpoint (API key) that:
+- `POST /auth/login`
+  - Accepts username and password in JSON format.
+  - Validates credentials against environment-configured users:
+    - `ADMIN_USERNAME` / `ADMIN_PASSWORD`
+    - `ANALYST_USERNAME` / `ANALYST_PASSWORD`
+  - On success, returns a signed JWT:
+    ```json
+    {
+      "accessToken": "<jwt>"
+    }
+    ```
+  - This token must be sent in the `Authorization: Bearer <accessToken>` header to access protected business APIs.
+
+- `POST /ingest`
+  - Device-authenticated ingest endpoint using per-device API keys.
+  - Requires:
+    - Header: `Authorization: Bearer <device_api_key>`
+    - Body: `device_id` matching an active device plus a non-empty `metrics` array.
   - Validates payload structure and types.
   - Normalizes metric names and timestamps.
   - Persists readings into `metric_readings`.
   - Triggers rule evaluation for each persisted reading.
   - Returns `200 OK` with `{ "status": "ok", "stored": <number_of_points> }` on success.
 
-- `GET /metrics/:deviceId/:metricName?from=&to=`  
-  Read-only metrics endpoint:
+- `GET /metrics/:deviceId/:metricName?from=&to=`
+  - Read-only metrics endpoint protected with JWT (accessible to `admin` and `analyst`).
   - Returns ordered time-series points for the requested device/metric/time range.
-  - Requires valid UUID `deviceId`, non-empty `metricName` and ISO-8601 `from` / `to` with `from <= to`.
+  - Requires:
+    - `deviceId` as a valid UUID v4.
+    - Non-empty `metricName`.
+    - ISO-8601 `from` / `to` with `from <= to`.
 
-- `POST /rules`  
-  Creates a new rule for a device/metric (MAX/MIN/RANGE).
+- `POST /rules`
+  - Protected with JWT; restricted to `admin`.
+  - Creates a new rule for a device/metric (MAX/MIN/RANGE) from a validated `CreateRuleDto`.
+  - Normalizes metric names to lowercase.
+  - Persists the rule in the `rules` table.
 
-- `GET /rules/:deviceId`  
-  Lists all rules defined for a given device.
+- `GET /rules/:deviceId`
+  - Protected with JWT; restricted to `admin`.
+  - Lists all rules defined for a given `deviceId` using `RulesRepository.findByDevice(...)`.
 
-- `GET /alerts`  
-  Lists alerts, optionally filtered by:
-  - `status` (`ACTIVE` | `RESOLVED`),
-  - `device_id` (UUID),
-  - `metric_name`,
-  - `from` / `to` (ISO-8601 time range on `triggered_at`).
+- `GET /alerts`
+  - Protected with JWT; accessible to `admin` and `analyst`.
+  - Lists alerts, optionally filtered by:
+    - `status` (`ACTIVE` | `RESOLVED`),
+    - `device_id` (UUID v4),
+    - `metric_name`,
+    - `from` / `to` (ISO-8601 time range on `triggered_at`).
+  - Uses `GetAlertsQueryDto` for robust query parameter validation.
+  - Returns alerts ordered by `triggered_at DESC`.
 
-- `PATCH /alerts/:id/resolve`  
-  Resolves an alert, changing its status from `ACTIVE` to `RESOLVED`.
+- `PATCH /alerts/:id/resolve`
+  - Protected with JWT; restricted to `admin`.
+  - Resolves an alert, changing its status from `ACTIVE` to `RESOLVED`.
+  - Returns the updated alert on success or `404` if the alert does not exist.
 
-- `GET /devices`  
-  Returns the list of registered devices without exposing their API keys.
+- `GET /devices`
+  - Protected with JWT; accessible to `admin` and `analyst`.
+  - Returns the list of registered devices without exposing their API keys.
 
-- `POST /devices`  
-  Registers a new device and returns its `id` and `api_key`. The API key is generated server-side and only returned in this response.
+- `POST /devices`
+  - Protected with JWT; restricted to `admin`.
+  - Registers a new device and returns its `id` and raw `api_key` once at creation time.
 
 ### Persistence and environment
 
@@ -422,7 +506,6 @@ Implemented HTTP endpoints at this stage:
 
 Future phases will extend this document with:
 
-- Device registration and per-device API keys.
-- User authentication and authorization (JWT).
-- Additional business-level query APIs (devices, rules and alerts filtering, aggregations).
-- Observability endpoints (`/metrics` for Prometheus) and more detailed performance considerations.
+- Observability endpoints (`/metrics` for Prometheus) and detailed performance considerations (F9).
+- Hardening and QA improvements: extended test coverage, rate limiting, additional validation (F10).
+- Final documentation polish, README for portfolio and release notes for v1.0.0 (F11).

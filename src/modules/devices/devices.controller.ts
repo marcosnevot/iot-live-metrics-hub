@@ -5,9 +5,11 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  UseGuards,
 } from "@nestjs/common";
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
@@ -20,8 +22,13 @@ import {
   DeviceResponseDto,
 } from "./dto/device-response.dto";
 import { Device } from "./device.entity";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { RolesGuard } from "../auth/guards/roles.guard";
+import { Roles } from "../auth/roles.decorator";
 
 @ApiTags("devices")
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller("devices")
 export class DevicesController {
   constructor(private readonly devicesRepository: DevicesRepository) {}
@@ -36,6 +43,7 @@ export class DevicesController {
     type: DeviceResponseDto,
     isArray: true,
   })
+  @Roles("admin", "analyst")
   async listDevices(): Promise<DeviceResponseDto[]> {
     const devices = await this.devicesRepository.findAll();
 
@@ -62,19 +70,21 @@ export class DevicesController {
   @ApiBadRequestResponse({
     description: "Invalid request body.",
   })
+  @Roles("admin")
   async createDevice(
     @Body() dto: CreateDeviceDto,
   ): Promise<DeviceCreatedResponseDto> {
-    const device = await this.devicesRepository.createDevice(dto.name);
+    const { device, apiKeyPlain } = await this.devicesRepository.createDevice(
+      dto.name,
+    );
 
     return {
       id: device.id,
       name: device.name,
-      api_key: device.apiKey,
+      api_key: apiKeyPlain,
       active: device.active,
       created_at: device.createdAt.toISOString(),
       updated_at: device.updatedAt.toISOString(),
     };
   }
 }
-

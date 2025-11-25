@@ -39,7 +39,8 @@ export class DeviceResponseDto {
 
 export class DeviceCreatedResponseDto extends DeviceResponseDto {
   @ApiProperty({
-    description: "Generated API key for this device. Returned only on creation.",
+    description:
+      "Generated API key for this device. Returned only on creation.",
     example: "a38f3c9e9d7c0e3f9b1c0f24f8e0f7c9f0d2b3e6a9c4d7f8b1c0a9e5f2d3c4",
   })
   api_key!: string;

@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Post } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
@@ -11,8 +12,13 @@ import { RulesRepository } from "./rules.repository";
 import { Rule } from "./rule.entity";
 import { CreateRuleDto } from "./dto/create-rule.dto";
 import { RuleResponseDto } from "./dto/rule-response.dto";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { RolesGuard } from "../auth/guards/roles.guard";
+import { Roles } from "../auth/roles.decorator";
 
 @ApiTags("Rules")
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller("rules")
 export class RulesController {
   constructor(private readonly rulesRepository: RulesRepository) {}
@@ -30,6 +36,7 @@ export class RulesController {
   @ApiBadRequestResponse({
     description: "Invalid rule definition or validation error.",
   })
+  @Roles("admin")
   async createRule(@Body() body: CreateRuleDto): Promise<Rule> {
     const ruleType = body.rule_type;
 
@@ -60,6 +67,7 @@ export class RulesController {
     type: RuleResponseDto,
     isArray: true,
   })
+  @Roles("admin")
   async getRulesForDevice(
     @Param("deviceId") deviceId: string,
   ): Promise<Rule[]> {
