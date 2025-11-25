@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { RulesRepository } from "./rules.repository";
 import { Rule, RuleType } from "./rule.entity";
 import { AlertsRepository } from "../alerts/alerts.repository";
+import { ObservabilityService } from "../observability/metrics.service";
 
 export interface MetricEvaluationContext {
   deviceId: string;
@@ -53,6 +54,7 @@ export class RulesEngineService {
   constructor(
     private readonly rulesRepository: RulesRepository,
     private readonly alertsRepository: AlertsRepository,
+    private readonly observability: ObservabilityService,
   ) {}
 
   /**
@@ -133,6 +135,12 @@ export class RulesEngineService {
           value,
         })
         .then((alert) => {
+          this.observability.incrementAlertTriggered(
+            deviceId,
+            metricName,
+            rule.ruleType,
+          );
+
           this.logger.warn({
             module: "rules_engine",
             operation: "create_alert",

@@ -4,6 +4,7 @@ import {
   TimeseriesReading,
   TimeseriesStorageService,
 } from "../storage/timeseries-storage.service";
+import { ObservabilityService } from "../observability/metrics.service";
 
 type IngestContext = {
   channel?: "http" | "mqtt";
@@ -13,12 +14,16 @@ type IngestContext = {
 export class IngestService {
   private readonly logger = new Logger(IngestService.name);
 
-  constructor(private readonly storage: TimeseriesStorageService) {}
+  constructor(
+    private readonly storage: TimeseriesStorageService,
+    private readonly observability: ObservabilityService,
+  ) {}
 
   async ingest(
     request: IngestRequestDto,
     context?: IngestContext,
   ): Promise<number> {
+    const processingStart = Date.now();
     const now = new Date();
     const channel = context?.channel ?? "http";
 
@@ -42,9 +47,21 @@ export class IngestService {
       status: "processing",
     });
 
+    const dbStart = Date.now();
+
     try {
       await this.storage.insertReadings(readings);
     } catch (error) {
+      const dbLatencyMs = Date.now() - dbStart;
+      const totalLatencyMs = Date.now() - processingStart;
+
+      this.observability.incrementIngestTotal(channel, "error");
+      this.observability.observeDbWriteLatency("insert_readings", dbLatencyMs);
+      this.observability.observeProcessingLatency(
+        "ingest_pipeline",
+        totalLatencyMs,
+      );
+
       this.logger.error({
         module: "ingest",
         operation: "store_metrics",
@@ -54,8 +71,19 @@ export class IngestService {
         status: "error",
         reason: (error as Error).message,
       });
+
       throw error;
     }
+
+    const dbLatencyMs = Date.now() - dbStart;
+    const totalLatencyMs = Date.now() - processingStart;
+
+    this.observability.incrementIngestTotal(channel, "success");
+    this.observability.observeDbWriteLatency("insert_readings", dbLatencyMs);
+    this.observability.observeProcessingLatency(
+      "ingest_pipeline",
+      totalLatencyMs,
+    );
 
     this.logger.log({
       module: "ingest",
