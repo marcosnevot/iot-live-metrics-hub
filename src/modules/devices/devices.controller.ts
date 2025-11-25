@@ -36,7 +36,7 @@ export class DevicesController {
     type: DeviceResponseDto,
     isArray: true,
   })
-  async listDevices() {
+  async listDevices(): Promise<DeviceResponseDto[]> {
     const devices = await this.devicesRepository.findAll();
 
     return devices.map((device: Device) => ({
@@ -53,7 +53,7 @@ export class DevicesController {
   @ApiOperation({
     summary: "Create device",
     description:
-      "Creates a new device and returns its identifier and API key. The API key is only returned on creation.",
+      "Creates a new device and returns its identifier and API key. The API key is only returned once at creation time.",
   })
   @ApiCreatedResponse({
     description: "Device successfully created.",
@@ -62,7 +62,9 @@ export class DevicesController {
   @ApiBadRequestResponse({
     description: "Invalid request body.",
   })
-  async createDevice(@Body() dto: CreateDeviceDto) {
+  async createDevice(
+    @Body() dto: CreateDeviceDto,
+  ): Promise<DeviceCreatedResponseDto> {
     const device = await this.devicesRepository.createDevice(dto.name);
 
     return {
@@ -75,3 +77,4 @@ export class DevicesController {
     };
   }
 }
+
