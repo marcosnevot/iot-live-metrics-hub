@@ -11,6 +11,7 @@ import { AlertsModule } from "./modules/alerts/alerts.module";
 import { DevicesModule } from "./modules/devices/devices.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { MetricsModule } from "./modules/metrics/metrics.module";
+import { ObservabilityModule } from "./modules/observability/observability.module";
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { MetricsModule } from "./modules/metrics/metrics.module";
     DevicesModule,
     AuthModule,
     MetricsModule,
+    ObservabilityModule,
   ],
   controllers: [AppController],
   providers: [AppService],
