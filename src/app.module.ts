@@ -17,6 +17,16 @@ import { MetricsModule } from "./modules/metrics/metrics.module";
     LoggerModule.forRoot({
       pinoHttp: {
         level: process.env.LOG_LEVEL || "info",
+        // Redact sensitive data from logs to avoid leaking secrets
+        redact: [
+          "req.headers.authorization",
+          'req.headers["x-api-key"]',
+          "req.headers.cookie",
+          "req.body.password",
+          "req.body.currentPassword",
+          "req.body.newPassword",
+          "req.body.token",
+        ],
         transport:
           process.env.NODE_ENV !== "production"
             ? {
@@ -42,3 +52,4 @@ import { MetricsModule } from "./modules/metrics/metrics.module";
   providers: [AppService],
 })
 export class AppModule {}
+
