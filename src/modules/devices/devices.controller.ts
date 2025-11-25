@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Post,
   UseGuards,
 } from "@nestjs/common";
@@ -31,6 +32,8 @@ import { Roles } from "../auth/roles.decorator";
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller("devices")
 export class DevicesController {
+  private readonly logger = new Logger(DevicesController.name);
+
   constructor(private readonly devicesRepository: DevicesRepository) {}
 
   @Get()
@@ -45,7 +48,20 @@ export class DevicesController {
   })
   @Roles("admin", "analyst")
   async listDevices(): Promise<DeviceResponseDto[]> {
+    this.logger.log({
+      module: "devices",
+      operation: "list_devices",
+      status: "requested",
+    });
+
     const devices = await this.devicesRepository.findAll();
+
+    this.logger.log({
+      module: "devices",
+      operation: "list_devices",
+      status: "success",
+      devicesCount: devices.length,
+    });
 
     return devices.map((device: Device) => ({
       id: device.id,
@@ -74,9 +90,25 @@ export class DevicesController {
   async createDevice(
     @Body() dto: CreateDeviceDto,
   ): Promise<DeviceCreatedResponseDto> {
+    this.logger.log({
+      module: "devices",
+      operation: "create_device",
+      name: dto.name,
+      status: "requested",
+    });
+
     const { device, apiKeyPlain } = await this.devicesRepository.createDevice(
       dto.name,
     );
+
+    this.logger.log({
+      module: "devices",
+      operation: "create_device",
+      deviceId: device.id,
+      name: device.name,
+      active: device.active,
+      status: "success",
+    });
 
     return {
       id: device.id,

@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from "@nestjs/common";
+import { Injectable, Logger, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 
 export type UserRole = "admin" | "analyst";
@@ -10,6 +10,8 @@ export interface AuthenticatedUser {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(private readonly jwtService: JwtService) {}
 
   private validateCredentials(
@@ -39,6 +41,14 @@ export class AuthService {
     const user = this.validateCredentials(username, password);
 
     if (!user) {
+      this.logger.warn({
+        module: "auth",
+        operation: "login",
+        username,
+        status: "failure",
+        reason: "invalid_credentials",
+      });
+
       throw new UnauthorizedException("Invalid credentials");
     }
 
@@ -48,6 +58,14 @@ export class AuthService {
     };
 
     const accessToken = await this.jwtService.signAsync(payload);
+
+    this.logger.log({
+      module: "auth",
+      operation: "login",
+      username: user.username,
+      role: user.role,
+      status: "success",
+    });
 
     return { accessToken };
   }

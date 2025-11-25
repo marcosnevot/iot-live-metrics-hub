@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Controller,
   Get,
+  Logger,
   Param,
   ParseUUIDPipe,
   Query,
@@ -33,6 +34,8 @@ import { Roles } from "../auth/roles.decorator";
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller("metrics")
 export class MetricsController {
+  private readonly logger = new Logger(MetricsController.name);
+
   constructor(private readonly timeseriesStorage: TimeseriesStorageService) {}
 
   @Get(":deviceId/:metricName")
@@ -80,6 +83,15 @@ export class MetricsController {
     @Query("to") toStr?: string,
   ): Promise<MetricsSeriesResponseDto> {
     if (!fromStr || !toStr) {
+      this.logger.warn({
+        module: "metrics",
+        operation: "get_metrics",
+        deviceId,
+        metricName,
+        status: "error",
+        reason: "missing_from_or_to",
+      });
+
       throw new BadRequestException(
         "Query parameters 'from' and 'to' are required",
       );
@@ -89,16 +101,48 @@ export class MetricsController {
     const to = new Date(toStr);
 
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      this.logger.warn({
+        module: "metrics",
+        operation: "get_metrics",
+        deviceId,
+        metricName,
+        status: "error",
+        reason: "invalid_timestamp",
+        rawFrom: fromStr,
+        rawTo: toStr,
+      });
+
       throw new BadRequestException(
         "Query parameters 'from' and 'to' must be valid ISO-8601 timestamps",
       );
     }
 
     if (from > to) {
+      this.logger.warn({
+        module: "metrics",
+        operation: "get_metrics",
+        deviceId,
+        metricName,
+        status: "error",
+        reason: "from_after_to",
+        from: from.toISOString(),
+        to: to.toISOString(),
+      });
+
       throw new BadRequestException(
         "'from' timestamp must be earlier than or equal to 'to' timestamp",
       );
     }
+
+    this.logger.log({
+      module: "metrics",
+      operation: "get_metrics",
+      deviceId,
+      metricName,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      status: "requested",
+    });
 
     const readings = await this.timeseriesStorage.getReadingsForDeviceMetric(
       deviceId,
@@ -106,6 +150,17 @@ export class MetricsController {
       from,
       to,
     );
+
+    this.logger.log({
+      module: "metrics",
+      operation: "get_metrics",
+      deviceId,
+      metricName,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      status: "success",
+      pointsCount: readings.length,
+    });
 
     return {
       device_id: deviceId,
