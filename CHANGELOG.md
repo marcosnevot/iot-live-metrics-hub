@@ -4,6 +4,82 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2025-11-25
+
+### Added
+
+- Security & Auth Hardening (F8 – Device API keys + JWT for business APIs):
+  - JWT-based user authentication:
+    - `AuthModule` wiring `JwtModule`, `JwtStrategy`, `JwtAuthGuard`, `RolesGuard` and `Roles` decorator.
+    - `POST /auth/login` endpoint:
+      - Accepts username/password in JSON (`LoginRequestDto`).
+      - Validates credentials against environment-configured users:
+        - `ADMIN_USERNAME` / `ADMIN_PASSWORD`
+        - `ANALYST_USERNAME` / `ANALYST_PASSWORD`
+      - Issues a signed JWT (HS256) with `sub` and `role` claims, using `JWT_SECRET` and `JWT_EXPIRES_IN`.
+      - Returns `{ "accessToken": "<jwt>" }`.
+  - Role-based protection for business APIs:
+    - `JwtAuthGuard` + `RolesGuard` applied to business controllers with `@Roles(...)`:
+      - `DevicesController`:
+        - `GET /devices` → accessible to `admin` and `analyst`.
+        - `POST /devices` → restricted to `admin`.
+      - `RulesController`:
+        - `POST /rules` → restricted to `admin`.
+        - `GET /rules/:deviceId` → restricted to `admin`.
+      - `AlertsController`:
+        - `GET /alerts` → accessible to `admin` and `analyst`.
+        - `PATCH /alerts/:id/resolve` → restricted to `admin`.
+      - `MetricsController`:
+        - `GET /metrics/:deviceId/:metricName` → accessible to `admin` and `analyst`.
+  - Stronger alerts query validation:
+    - New `GetAlertsQueryDto` for `GET /alerts` using `class-validator`:
+      - `status` validated as `AlertStatus` enum (`ACTIVE` | `RESOLVED`).
+      - `device_id` validated as UUID v4.
+      - `metric_name` validated as optional string.
+      - `from` / `to` validated as ISO-8601 timestamps.
+    - Keeps the invariant `from <= to` with a clear `400 Bad Request` when violated.
+
+### Changed
+
+- Device API key management and ingest authentication (F8 – Per-device keys):
+  - `Device` domain model updated so the in-memory entity exposes `apiKeyHash` instead of the raw key.
+  - `DevicesRepository`:
+    - `createDevice(name)`:
+      - Generates a high-entropy random API key (`randomBytes(32)`).
+      - Computes a SHA-256 hash (`hashDeviceApiKey`) and stores only the hash in `devices.api_key`.
+      - Returns `{ device, apiKeyPlain }` so the controller can return the raw key once at creation time.
+    - New `findById(id)` method to look up devices by identifier.
+  - `DevicesController`:
+    - `POST /devices` now uses the `{ device, apiKeyPlain }` return shape:
+      - Persists only the hash.
+      - Returns the raw API key in `DeviceCreatedResponseDto` once at creation time.
+    - `GET /devices` remains read-only and never exposes API keys.
+  - Ingest authentication pipeline:
+    - `ApiKeyService` reworked to validate per-device API keys instead of a single global `INGEST_API_KEY`:
+      - Looks up the device by `device_id` in the `devices` table.
+      - Verifies that the device is active.
+      - Compares the SHA-256 hash of the provided API key against `devices.api_key`.
+      - Supports legacy devices by also accepting a direct match when `devices.api_key` still contains a raw key.
+    - `ApiKeyAuthGuard` updated to:
+      - Expect `Authorization: Bearer <device_api_key>` header.
+      - Read `device_id` from the JSON body.
+      - Call `ApiKeyService.validateDeviceApiKey(apiKey, deviceId)` and attach `{ device: { id } }` to the request on success.
+    - `POST /ingest` now enforces:
+      - A valid device API key bound to the `device_id` present in the payload.
+      - Proper `401`/`403` responses for missing/invalid headers or mismatched device/API key pairs.
+- Alerts API robustness:
+  - `AlertsController` `GET /alerts` refactored to:
+    - Use `GetAlertsQueryDto` as the single source of truth for query parameter validation.
+    - Rely on DTO-level validation for invalid `status`, malformed UUIDs and malformed timestamps instead of manual checks.
+    - Keep the existing `AlertsRepository.findByCriteria({ status, deviceId, metricName, from, to })` contract while improving error reporting.
+- Documentation and architecture:
+  - `ARCHITECTURE.md` updated to reflect:
+    - JWT-based user authentication with `admin` and `analyst` roles and their permissions.
+    - Per-device API key hashing strategy (SHA-256) and binding between `device_id` and API key at ingest time.
+    - Updated security schemes in the HTTP surface:
+      - Bearer JWT for business APIs.
+      - Per-device API key for ingest (`Authorization: Bearer <device_api_key>`).
+
 ## [0.7.0] - 2025-11-24
 
 ### Added
