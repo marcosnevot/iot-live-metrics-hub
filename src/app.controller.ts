@@ -1,5 +1,9 @@
 import { Controller, Get } from "@nestjs/common";
-import { ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
+import {
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from "@nestjs/swagger";
 import { AppService } from "./app.service";
 import { HealthResponseDto } from "./app-health.dto";
 
@@ -41,3 +45,4 @@ export class AppController {
     };
   }
 }
+
