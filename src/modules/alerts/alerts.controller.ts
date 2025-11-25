@@ -6,9 +6,11 @@ import {
   Param,
   Patch,
   Query,
+  UseGuards,
 } from "@nestjs/common";
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -18,8 +20,14 @@ import {
 import { AlertsRepository } from "./alerts.repository";
 import { Alert, AlertStatus } from "./alert.entity";
 import { AlertResponseDto } from "./dto/alert-response.dto";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { RolesGuard } from "../auth/guards/roles.guard";
+import { Roles } from "../auth/roles.decorator";
+import { GetAlertsQueryDto } from "./dto/get-alerts-query.dto";
 
 @ApiTags("alerts")
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller("alerts")
 export class AlertsController {
   constructor(private readonly alertsRepository: AlertsRepository) {}
@@ -71,54 +79,27 @@ export class AlertsController {
       "Filter alerts triggered at or before this timestamp (ISO-8601).",
     example: "2025-11-25T00:00:00Z",
   })
-  async getAlerts(
-    @Query("status") status?: string,
-    @Query("device_id") deviceId?: string,
-    @Query("metric_name") metricName?: string,
-    @Query("from") from?: string,
-    @Query("to") to?: string,
-  ): Promise<Alert[]> {
-    let parsedStatus: AlertStatus | undefined;
-
-    if (status !== undefined) {
-      if (status === AlertStatus.ACTIVE || status === AlertStatus.RESOLVED) {
-        parsedStatus = status as AlertStatus;
-      } else {
-        throw new BadRequestException(
-          "Invalid status. Allowed values: ACTIVE, RESOLVED",
-        );
-      }
-    }
+  @Roles("admin", "analyst")
+  async getAlerts(@Query() query: GetAlertsQueryDto): Promise<Alert[]> {
+    const { status, device_id, metric_name, from, to } = query;
 
     const normalizedDeviceId =
-      deviceId && deviceId.trim().length > 0 ? deviceId.trim() : undefined;
+      device_id && device_id.trim().length > 0 ? device_id.trim() : undefined;
 
     const normalizedMetricName =
-      metricName && metricName.trim().length > 0
-        ? metricName.trim()
+      metric_name && metric_name.trim().length > 0
+        ? metric_name.trim()
         : undefined;
 
     let parsedFrom: Date | undefined;
     let parsedTo: Date | undefined;
 
     if (from !== undefined) {
-      const fromDate = new Date(from);
-      if (Number.isNaN(fromDate.getTime())) {
-        throw new BadRequestException(
-          'Invalid "from" parameter. Expected ISO-8601 datetime string.',
-        );
-      }
-      parsedFrom = fromDate;
+      parsedFrom = new Date(from);
     }
 
     if (to !== undefined) {
-      const toDate = new Date(to);
-      if (Number.isNaN(toDate.getTime())) {
-        throw new BadRequestException(
-          'Invalid "to" parameter. Expected ISO-8601 datetime string.',
-        );
-      }
-      parsedTo = toDate;
+      parsedTo = new Date(to);
     }
 
     if (parsedFrom && parsedTo && parsedFrom > parsedTo) {
@@ -128,7 +109,7 @@ export class AlertsController {
     }
 
     return this.alertsRepository.findByCriteria({
-      status: parsedStatus,
+      status,
       deviceId: normalizedDeviceId,
       metricName: normalizedMetricName,
       from: parsedFrom,
@@ -148,6 +129,7 @@ export class AlertsController {
   @ApiNotFoundResponse({
     description: "Alert with the given id was not found.",
   })
+  @Roles("admin")
   async resolveAlert(@Param("id") id: string): Promise<Alert> {
     const updated = await this.alertsRepository.resolveAlert(id);
 

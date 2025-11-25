@@ -23,7 +23,7 @@ export class IngestController {
   @ApiOperation({
     summary: "Ingest metrics via HTTP",
     description:
-      "Accepts a batch of metrics in JSON format and stores them in the time-series backend. Requires a valid x-api-key header.",
+      "Accepts a batch of metrics in JSON format and stores them in the time-series backend. Requires a valid device API key in the Authorization: Bearer <api_key> header.",
   })
   @ApiSecurity("api-key")
   @ApiBody({

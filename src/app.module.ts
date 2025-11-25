@@ -17,7 +17,6 @@ import { MetricsModule } from "./modules/metrics/metrics.module";
     LoggerModule.forRoot({
       pinoHttp: {
         level: process.env.LOG_LEVEL || "info",
-        // En local, logs “bonitos”; en producción, JSON crudo.
         transport:
           process.env.NODE_ENV !== "production"
             ? {

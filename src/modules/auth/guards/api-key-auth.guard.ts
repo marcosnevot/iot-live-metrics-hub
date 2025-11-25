@@ -11,7 +11,7 @@ import { ApiKeyService } from "../api-key.service";
 export class ApiKeyAuthGuard implements CanActivate {
   constructor(private readonly apiKeyService: ApiKeyService) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
 
     const authHeader =
@@ -27,13 +27,25 @@ export class ApiKeyAuthGuard implements CanActivate {
       throw new UnauthorizedException("Invalid Authorization format");
     }
 
-    const result = this.apiKeyService.validateDeviceApiKey(token);
+    const deviceIdFromBody =
+      (request.body && (request.body as any).device_id) || undefined;
 
-    if (!result) {
-      throw new UnauthorizedException("Invalid API key");
+    if (!deviceIdFromBody || typeof deviceIdFromBody !== "string") {
+      throw new UnauthorizedException(
+        "Missing or invalid device_id in request body",
+      );
     }
 
-    // Guardamos el contexto del dispositivo para uso futuro (reglas, auditoría, etc.)
+    const result = await this.apiKeyService.validateDeviceApiKey(
+      token,
+      deviceIdFromBody,
+    );
+
+    if (!result) {
+      throw new UnauthorizedException("Invalid API key or device");
+    }
+
+    // Device context for downstream logging / auditing if needed.
     (request as any).device = {
       id: result.deviceId,
     };

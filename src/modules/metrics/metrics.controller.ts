@@ -5,9 +5,11 @@ import {
   Param,
   ParseUUIDPipe,
   Query,
+  UseGuards,
 } from "@nestjs/common";
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -16,6 +18,9 @@ import {
 } from "@nestjs/swagger";
 import { TimeseriesStorageService } from "../storage/timeseries-storage.service";
 import { MetricsSeriesResponseDto } from "./dto/metric-series-response.dto";
+import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
+import { RolesGuard } from "../auth/guards/roles.guard";
+import { Roles } from "../auth/roles.decorator";
 
 /**
  * MetricsController exposes read-only time-series queries
@@ -24,6 +29,8 @@ import { MetricsSeriesResponseDto } from "./dto/metric-series-response.dto";
  * GET /metrics/{device_id}/{metric_name}?from=&to=
  */
 @ApiTags("Metrics")
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller("metrics")
 export class MetricsController {
   constructor(private readonly timeseriesStorage: TimeseriesStorageService) {}
@@ -65,6 +72,7 @@ export class MetricsController {
     description:
       "Missing or invalid 'from'/'to' query parameters, invalid UUID or invalid time range.",
   })
+  @Roles("admin", "analyst")
   async getMetricsByDeviceAndName(
     @Param("deviceId", new ParseUUIDPipe({ version: "4" })) deviceId: string,
     @Param("metricName") metricName: string,
