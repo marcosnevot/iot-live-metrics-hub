@@ -25,48 +25,87 @@ export class MqttIngestListener implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     const envBrokerUrl = process.env.MQTT_BROKER_URL;
-    this.logger.log(
-      `MQTT_BROKER_URL env value: ${envBrokerUrl ?? "(not set)"}`,
-    );
+
+    this.logger.log({
+      module: "mqtt_ingest",
+      operation: "init",
+      step: "read_env",
+      brokerUrl: envBrokerUrl ?? "(not set)",
+    });
 
     // Force IPv4 localhost for local dev to avoid any resolution issues
     const brokerUrl = envBrokerUrl || "mqtt://127.0.0.1:1883";
 
-    this.logger.log(`Connecting to MQTT broker at ${brokerUrl}...`);
+    this.logger.log({
+      module: "mqtt_ingest",
+      operation: "connect",
+      brokerUrl,
+      status: "connecting",
+    });
 
     this.client = connect(brokerUrl, {
       reconnectPeriod: 5_000,
     });
 
     this.client.on("connect", () => {
-      this.logger.log("Connected to MQTT broker");
+      this.logger.log({
+        module: "mqtt_ingest",
+        operation: "connect",
+        brokerUrl,
+        status: "connected",
+      });
 
       const topic = "devices/+/metrics";
 
       this.client?.subscribe(topic, { qos: 1 }, (err) => {
         if (err) {
-          this.logger.error(`Failed to subscribe to topic ${topic}`, err);
+          this.logger.error({
+            module: "mqtt_ingest",
+            operation: "subscribe",
+            topic,
+            status: "error",
+            reason: (err as Error).message,
+          });
           return;
         }
-        this.logger.log(`Subscribed to MQTT topic: ${topic}`);
+
+        this.logger.log({
+          module: "mqtt_ingest",
+          operation: "subscribe",
+          topic,
+          status: "subscribed",
+        });
       });
     });
 
     this.client.on("reconnect", () => {
-      this.logger.warn("MQTT client reconnecting");
+      this.logger.warn({
+        module: "mqtt_ingest",
+        operation: "lifecycle",
+        event: "reconnect",
+      });
     });
 
     this.client.on("close", () => {
-      this.logger.warn("MQTT client connection closed");
+      this.logger.warn({
+        module: "mqtt_ingest",
+        operation: "lifecycle",
+        event: "close",
+      });
     });
 
     this.client.on("offline", () => {
-      this.logger.warn("MQTT client offline");
+      this.logger.warn({
+        module: "mqtt_ingest",
+        operation: "lifecycle",
+        event: "offline",
+      });
     });
 
     this.client.on("error", (err) => {
       this.logger.error({
-        msg: "mqtt_client_error",
+        module: "mqtt_ingest",
+        operation: "client_error",
         error: (err as Error).message,
       });
     });
@@ -79,10 +118,20 @@ export class MqttIngestListener implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     if (this.client && this.client.connected) {
-      this.logger.log("Closing MQTT client connection");
+      this.logger.log({
+        module: "mqtt_ingest",
+        operation: "shutdown",
+        status: "closing_connection",
+      });
 
       await new Promise<void>((resolve) => {
         this.client?.end(false, {}, () => resolve());
+      });
+
+      this.logger.log({
+        module: "mqtt_ingest",
+        operation: "shutdown",
+        status: "connection_closed",
       });
     }
   }
@@ -95,7 +144,8 @@ export class MqttIngestListener implements OnModuleInit, OnModuleDestroy {
     const payloadString = payload.toString();
 
     this.logger.debug({
-      msg: "mqtt_message_received",
+      module: "mqtt_ingest",
+      operation: "message_received",
       topic,
       payload: payloadString,
     });
@@ -108,7 +158,9 @@ export class MqttIngestListener implements OnModuleInit, OnModuleDestroy {
       topicParts[2] !== "metrics"
     ) {
       this.logger.warn({
-        msg: "mqtt_unexpected_topic",
+        module: "mqtt_ingest",
+        operation: "message_received",
+        event: "unexpected_topic",
         topic,
       });
       return;
@@ -121,10 +173,12 @@ export class MqttIngestListener implements OnModuleInit, OnModuleDestroy {
       parsed = JSON.parse(payloadString);
     } catch (error) {
       this.logger.warn({
-        msg: "mqtt_invalid_json",
+        module: "mqtt_ingest",
+        operation: "parse_payload",
         topic,
         deviceId,
-        error: (error as Error).message,
+        status: "error",
+        reason: (error as Error).message,
       });
       return;
     }
@@ -133,10 +187,12 @@ export class MqttIngestListener implements OnModuleInit, OnModuleDestroy {
 
     if (!Array.isArray(data.metrics) || data.metrics.length === 0) {
       this.logger.warn({
-        msg: "mqtt_invalid_payload",
+        module: "mqtt_ingest",
+        operation: "validate_payload",
         topic,
         deviceId,
-        details: "metrics field must be a non-empty array",
+        status: "error",
+        reason: "metrics field must be a non-empty array",
       });
       return;
     }
@@ -147,10 +203,12 @@ export class MqttIngestListener implements OnModuleInit, OnModuleDestroy {
     for (const candidate of data.metrics) {
       if (!this.isValidMetric(candidate)) {
         this.logger.warn({
-          msg: "mqtt_invalid_metric",
+          module: "mqtt_ingest",
+          operation: "validate_metric",
           topic,
           deviceId,
-          metric: candidate,
+          status: "error",
+          invalidMetric: candidate,
         });
         return;
       }
@@ -173,15 +231,19 @@ export class MqttIngestListener implements OnModuleInit, OnModuleDestroy {
       });
 
       this.logger.log({
-        msg: "mqtt_ingest_success",
+        module: "mqtt_ingest",
+        operation: "ingest",
         deviceId,
         metricsCount: stored,
+        status: "success",
       });
     } catch (error) {
       this.logger.error({
-        msg: "mqtt_ingest_error",
+        module: "mqtt_ingest",
+        operation: "ingest",
         deviceId,
-        error: (error as Error).message,
+        status: "error",
+        reason: (error as Error).message,
       });
     }
   }

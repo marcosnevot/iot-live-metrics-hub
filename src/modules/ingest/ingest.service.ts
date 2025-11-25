@@ -33,24 +33,37 @@ export class IngestService {
       };
     });
 
+    this.logger.debug({
+      module: "ingest",
+      operation: "store_metrics",
+      channel,
+      deviceId: request.device_id,
+      metricsCount: readings.length,
+      status: "processing",
+    });
+
     try {
       await this.storage.insertReadings(readings);
     } catch (error) {
       this.logger.error({
-        msg: "ingest_db_error",
+        module: "ingest",
+        operation: "store_metrics",
         channel,
         deviceId: request.device_id,
         metricsCount: readings.length,
-        error: (error as Error).message,
+        status: "error",
+        reason: (error as Error).message,
       });
       throw error;
     }
 
     this.logger.log({
-      msg: "ingest_success",
+      module: "ingest",
+      operation: "store_metrics",
       channel,
       deviceId: request.device_id,
       metricsCount: readings.length,
+      status: "success",
     });
 
     return readings.length;
