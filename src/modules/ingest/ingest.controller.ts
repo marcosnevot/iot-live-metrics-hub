@@ -8,6 +8,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 import { IngestService } from "./ingest.service";
 import { IngestRequestDto } from "./dto/ingest-request.dto";
 import { ApiKeyAuthGuard } from "../auth/guards/api-key-auth.guard";
@@ -20,6 +21,13 @@ export class IngestController {
 
   constructor(private readonly ingestService: IngestService) {}
 
+  @Throttle({
+    default: {
+      // IP limit for HTTP ingest: 120 attempts per 60 seconds
+      limit: 120,
+      ttl: 60_000,
+    },
+  })
   @UseGuards(ApiKeyAuthGuard)
   @Post("ingest")
   @ApiOperation({

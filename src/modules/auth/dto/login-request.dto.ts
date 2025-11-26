@@ -13,7 +13,7 @@ export class LoginRequestDto {
 
   @ApiProperty({
     description: "Password of the human user.",
-    example: "change-me-admin",
+    example: "replace-with-admin-password",
   })
   @IsString()
   @MinLength(3)

@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
+import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { LoggerModule } from "nestjs-pino";
 
 import { AppController } from "./app.controller";
@@ -41,6 +43,17 @@ import { ObservabilityModule } from "./modules/observability/observability.modul
             : undefined,
       },
     }),
+
+    // Global rate limiting (basic hardening)
+    ThrottlerModule.forRoot([
+      {
+        // Time window in milliseconds (default 60 seconds)
+        ttl: Number(process.env.RATE_LIMIT_TTL_MS || "60000"),
+        // Max requests per IP in that window (global default)
+        limit: Number(process.env.RATE_LIMIT_LIMIT || "300"),
+      },
+    ]),
+
     IngestModule,
     StorageModule,
     RulesModule,
@@ -51,6 +64,12 @@ import { ObservabilityModule } from "./modules/observability/observability.modul
     ObservabilityModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}
