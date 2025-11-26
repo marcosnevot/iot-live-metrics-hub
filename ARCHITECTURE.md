@@ -89,7 +89,7 @@ future split into services if needed.
 - **DEC-08** – No local shell scripts; only standalone commands.
 - **DEC-09** – Strict alignment with the corporate Git/GitHub guide.
 
-## Implementation status (release 0.9.0 – F3 HTTP ingest + F4 MQTT ingest + F5 Time-Series Storage + F6 Rules Engine & Alerts + F7 Business APIs & Swagger + F8 Security + F9 Observability + F10 Hardening & QA)
+## Implementation status (release 1.0.0 – stable: HTTP & MQTT ingest, time-series storage, rules engine & alerts, business APIs & Swagger, security, observability and hardening & QA)
 
 At this stage, the backend implements the following:
 
@@ -119,12 +119,23 @@ At this stage, the backend implements the following:
     - `ANALYST_USERNAME`, `ANALYST_PASSWORD` – credentials for the analyst user.
   - Environment variable loading:
     - Configuration is loaded via `dotenv` from a local `.env` file at application bootstrap (see `main.ts`).
-    - `.env.example` provides documented local-development defaults; the real `.env` file is excluded from version control to comply with RNF-07 (no real credentials in the repository).
+    - .env.example provides documented local-development defaults; the real .env file is excluded from version control so that real credentials are never committed to the repository.
+
+### Rate limiting and abuse protection
+
+- Global throttling:
+  - The backend uses `@nestjs/throttler` with a global `ThrottlerGuard` to limit the number of requests per IP.
+  - Global defaults are configured via environment variables:
+    - `RATE_LIMIT_TTL_MS` – time window in milliseconds (default: 60000).
+    - `RATE_LIMIT_LIMIT` – maximum number of requests per IP within that window (default: 300).
+- Endpoint-specific policies:
+  - `POST /auth/login` has a stricter policy (around 5 login attempts per minute per IP) to mitigate credential stuffing and brute-force attacks.
+  - `POST /ingest` has a more permissive policy (around 120 requests per minute per IP) to support normal device traffic while still protecting against abuse.
 
 ### Ingest module
 
 - **HTTP ingest** (`IngestModule` + `IngestController` + `IngestService`):
-  - Real HTTP endpoint `POST /ingest` implemented according to the Master Design Document.
+  - Production-grade HTTP endpoint POST /ingest that accepts device-authenticated metric batches and persists them into the time-series store.
   - Request/response contracts modeled with DTOs (`IngestRequestDto`, `MetricDto`) and validated via `class-validator` / `class-transformer`.
   - Device-side API key authentication for ingest using `ApiKeyAuthGuard` + `ApiKeyService`, expecting:
     - `Authorization: Bearer <device_api_key>` header.
@@ -222,7 +233,7 @@ This module satisfies the initial metrics query requirements and is used as a de
 
 ### Rules module (rules storage, engine and API)
 
-The Rules module implements the data model and runtime behavior specified for RF-11 (rule definition) and RF-12 (automatic evaluation).
+The Rules module implements the data model and runtime behavior for defining threshold rules and evaluating them automatically on each new metric.
 
 - **Domain model & persistence** (`Rule` entity + `RulesRepository`):
   - Table `rules` with fields:
@@ -287,7 +298,7 @@ This module provides the minimum viable surface to define and inspect rules per 
 
 ### Alerts module (alert lifecycle and API)
 
-The Alerts module implements RF-13 (alert generation), RF-14 (alert status) and RF-15 (alert query surface).
+The Alerts module covers alert generation, alert lifecycle (ACTIVE / RESOLVED) and a query surface for active and historical alerts.
 
 - **Domain model & persistence** (`Alert` entity + `AlertsRepository`):
   - Table `alerts` with fields:
@@ -408,7 +419,7 @@ Implemented HTTP endpoints at this stage:
   - Normalizes metric names and timestamps.
   - Persists readings into `metric_readings`.
   - Triggers rule evaluation for each persisted reading.
-  - Returns `200 OK` with `{ "status": "ok", "stored": <number_of_points> }` on success.
+  - Returns `201 Created` with `{ "status": "ok", "stored": <number_of_points> }` on success.
 
 - `GET /metrics/:deviceId/:metricName?from=&to=`
   - Read-only metrics endpoint protected with JWT (accessible to `admin` and `analyst`).
@@ -513,7 +524,7 @@ Implemented HTTP endpoints at this stage:
     - Unit tests
     - E2E tests
     - Build.
-  - F10 – Hardening & QA consolidates this toolchain and enforces green CI (lint + unit + e2e) on every push to main and feature branches.
+  - The Hardening & QA release consolidates this toolchain and enforces green CI (lint + unit + e2e) on every push to main and feature branches.
 
 - **Unit tests**:
   - `AppService` basic behavior.
@@ -552,8 +563,9 @@ Implemented HTTP endpoints at this stage:
 
 ---
 
-Future phases/releases will extend this document with:
+---
+Future releases may extend this document with:
 
-- More detailed performance considerations and SLOs based on the existing Prometheus metrics.
-- Optional advanced hardening (e.g. rate limiting for ingest/auth and additional validation) beyond the v1.0.0 scope.
-- Final documentation polish, README for portfolio and release notes for v1.0.0 (F11).
+- More detailed performance considerations and SLOs based on Prometheus metrics and load-testing results.
+- Additional security and robustness improvements (for example, richer validation rules and more advanced alert de-duplication or aggregation strategies) if required by real-world usage.
+- Further documentation polish, extra examples and operational runbooks tailored to production deployments.
