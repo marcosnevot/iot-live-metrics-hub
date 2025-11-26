@@ -11,17 +11,20 @@ process.env.DB_PASSWORD = process.env.DB_PASSWORD || "admin";
 process.env.DB_NAME = process.env.DB_NAME || "postgres";
 
 // Auth defaults for e2e (admin + analyst)
-process.env.JWT_SECRET = process.env.JWT_SECRET || "replace-with-local-jwt-secret";
+process.env.JWT_SECRET =
+  process.env.JWT_SECRET || "replace-with-local-jwt-secret";
 process.env.JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1h";
-process.env.ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin@local.test";
-process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "replace-with-admin-password";
-process.env.ANALYST_USERNAME = process.env.ANALYST_USERNAME || "analyst@local.test";
+process.env.ADMIN_USERNAME =
+  process.env.ADMIN_USERNAME || "admin@local.test";
+process.env.ADMIN_PASSWORD =
+  process.env.ADMIN_PASSWORD || "replace-with-admin-password";
+process.env.ANALYST_USERNAME =
+  process.env.ANALYST_USERNAME || "analyst@local.test";
 process.env.ANALYST_PASSWORD =
   process.env.ANALYST_PASSWORD || "replace-with-analyst-password";
 
-describe("IngestController (e2e)", () => {
+describe("AlertsController (e2e)", () => {
   let app: INestApplication;
-
   let adminAccessToken: string;
   let deviceId: string;
   let deviceApiKey: string;
@@ -46,7 +49,7 @@ describe("IngestController (e2e)", () => {
 
     await app.init();
 
-    // 1) Login as admin to obtain a JWT for protected business APIs
+    // Login as admin
     const loginRes = await request(app.getHttpServer())
       .post("/auth/login")
       .send({
@@ -57,11 +60,11 @@ describe("IngestController (e2e)", () => {
 
     adminAccessToken = loginRes.body.accessToken as string;
 
-    // 2) Create a real device to get device_id + api_key for ingest
+    // Create device
     const deviceRes = await request(app.getHttpServer())
       .post("/devices")
       .set("Authorization", `Bearer ${adminAccessToken}`)
-      .send({ name: "e2e-ingest-device" })
+      .send({ name: "e2e-alerts-device" })
       .expect(201);
 
     deviceId = deviceRes.body.id as string;
@@ -72,49 +75,10 @@ describe("IngestController (e2e)", () => {
     await app.close();
   });
 
-  it("should accept a valid payload and return ok status", async () => {
-    const res = await request(app.getHttpServer())
-      .post("/ingest")
-      .set("Authorization", `Bearer ${deviceApiKey}`)
-      .send({
-        device_id: deviceId,
-        metrics: [
-          { name: "temperature", value: 27.5, ts: "2025-01-01T12:00:00Z" },
-          { name: "humidity", value: 40.1 },
-        ],
-      })
-      .expect(201);
+  it("should resolve an ACTIVE alert and change its status to RESOLVED", async () => {
+    const metricName = "temperature_e2e_alert_resolve";
 
-    expect(res.body).toEqual({ status: "ok", stored: 2 });
-  });
-
-  it("should return 401 when API key is missing", async () => {
-    await request(app.getHttpServer())
-      .post("/ingest")
-      .send({
-        device_id: deviceId,
-        metrics: [{ name: "temperature", value: 27.5 }],
-      })
-      .expect(401);
-  });
-
-  it("should return 400 when payload is invalid", async () => {
-    // En este caso queremos que pase el guard (API key + device_id correctos)
-    // y falle por validación del payload (metrics vacío).
-    await request(app.getHttpServer())
-      .post("/ingest")
-      .set("Authorization", `Bearer ${deviceApiKey}`)
-      .send({
-        device_id: deviceId,
-        metrics: [],
-      })
-      .expect(400);
-  });
-
-  it("should create an ACTIVE alert when a metric violates a MAX rule", async () => {
-    const metricName = "temperature_e2e_rule";
-
-    // 1) Create a MAX rule via HTTP API (protegido por JWT admin)
+    // 1) Create a MAX rule for this metric
     const ruleRes = await request(app.getHttpServer())
       .post("/rules")
       .set("Authorization", `Bearer ${adminAccessToken}`)
@@ -134,7 +98,7 @@ describe("IngestController (e2e)", () => {
       enabled: true,
     });
 
-    // 2) Ingest a metric that violates the rule (value > max) usando API key del dispositivo
+    // 2) Ingest a metric that violates the rule to generate an ACTIVE alert
     const ingestRes = await request(app.getHttpServer())
       .post("/ingest")
       .set("Authorization", `Bearer ${deviceApiKey}`)
@@ -146,16 +110,16 @@ describe("IngestController (e2e)", () => {
 
     expect(ingestRes.body).toEqual({ status: "ok", stored: 1 });
 
-    // 3) Read ACTIVE alerts (protegido por JWT) y verificar que hay un alert que coincide
-    const alertsRes = await request(app.getHttpServer())
+    // 3) Fetch ACTIVE alerts and pick one
+    const activeAlertsRes = await request(app.getHttpServer())
       .get("/alerts")
       .set("Authorization", `Bearer ${adminAccessToken}`)
       .query({ status: "ACTIVE" })
       .expect(200);
 
-    const alerts: any[] = alertsRes.body;
+    const activeAlerts: any[] = activeAlertsRes.body;
 
-    const matchingAlerts = alerts.filter(
+    const alertToResolve = activeAlerts.find(
       (a) =>
         a.deviceId === deviceId &&
         a.metricName === metricName &&
@@ -163,6 +127,36 @@ describe("IngestController (e2e)", () => {
         a.status === "ACTIVE",
     );
 
-    expect(matchingAlerts.length).toBeGreaterThan(0);
+    expect(alertToResolve).toBeDefined();
+
+    const alertId = alertToResolve.id as string;
+
+    // 4) Resolve the alert
+    const resolvedRes = await request(app.getHttpServer())
+      .patch(`/alerts/${alertId}/resolve`)
+      .set("Authorization", `Bearer ${adminAccessToken}`)
+      .expect(200);
+
+    expect(resolvedRes.body).toMatchObject({
+      id: alertId,
+      deviceId,
+      metricName,
+      value: 35,
+      status: "RESOLVED",
+    });
+
+    expect(resolvedRes.body.resolvedAt).toBeDefined();
+
+    // 5) Confirm it no longer appears as ACTIVE
+    const activeAfterResolveRes = await request(app.getHttpServer())
+      .get("/alerts")
+      .set("Authorization", `Bearer ${adminAccessToken}`)
+      .query({ status: "ACTIVE" })
+      .expect(200);
+
+    const activeAfterResolve: any[] = activeAfterResolveRes.body;
+
+    const stillActive = activeAfterResolve.find((a) => a.id === alertId);
+    expect(stillActive).toBeUndefined();
   });
 });
