@@ -10,7 +10,8 @@ import { RolesGuard } from "./guards/roles.guard";
 import { ApiKeyAuthGuard } from "./guards/api-key-auth.guard";
 import { DevicesModule } from "../devices/devices.module";
 
-const jwtSecret = process.env.JWT_SECRET || "temporary-jwt-secret";
+const jwtSecret = process.env.JWT_SECRET || "replace-with-local-jwt-secret";
+const jwtExpiresIn = process.env.JWT_EXPIRES_IN || "1h";
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ const jwtSecret = process.env.JWT_SECRET || "temporary-jwt-secret";
     JwtModule.register({
       secret: jwtSecret,
       signOptions: {
-        expiresIn: (process.env.JWT_EXPIRES_IN || "1h") as any,
+        expiresIn: jwtExpiresIn as any,
       },
     }),
     DevicesModule,
