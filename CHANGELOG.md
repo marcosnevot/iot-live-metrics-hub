@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2025-11-26
+
+### Added
+
+- Final documentation for the first public release:
+  - Polished `ARCHITECTURE.md` so that it reflects the current implementation up to release `0.10.0` and is self-contained, without references to internal design documents.
+  - Updated `README.md` to include:
+    - A concise project overview and key technical features.
+    - A Docker Compose–based quickstart guide for running the backend in local development (environment variables, infrastructure setup and how to run the app).
+    - Links to architecture and contribution guidelines.
+  - Clarified how to run automated tests (unit and end-to-end) and what the happy path looks like for the main flows (auth, devices, ingest, metrics, rules and alerts).
+
+### Changed
+
+- Changelog and release information:
+  - Consolidated `CHANGELOG.md` entries up to `v1.0.0`, aligning wording and dates with the evolution of the codebase.
+  - Marked release `0.10.0` as the last pre-1.0.0 technical milestone and `1.0.0` as the first “portfolio-ready” release, with no functional changes compared to `0.10.0`.
+
+- Documentation consistency:
+  - Removed remaining references to external “Master Design” documents that were only used during development.
+  - Ensured terminology is consistent across `README.md`, `ARCHITECTURE.md` and the HTTP API surface (naming of roles, endpoints and core modules).
+
 ## [0.10.0] - 2025-11-26
 
 ### Added
@@ -30,7 +52,7 @@ The format follows [Semantic Versioning](https://semver.org/).
 
 - Tooling & CI:
   - Cleaned up remaining ESLint/Prettier warnings (including CRLF-related noise) so that `npm run lint`, `npm test` and `npm run test:e2e` run cleanly in local development.
-  - Confirmed that the GitHub Actions workflow continues to run `npm run lint`, `npm test` and `npm run build` on pushes and pull requests targeting `main` and standard feature/bugfix/hotfix/chore branches.
+  - Confirmed that the GitHub Actions workflow continues to run `npm run lint`, `npm test`, `npm test:e2e` and `npm run build` on pushes and pull requests targeting `main` and standard feature/bugfix/hotfix/chore branches.
 
 - Logging & controllers:
   - Performed minor adjustments to structured logs emitted by authentication, ingest, devices and alerts controllers to keep a consistent event shape across modules (`module`, `operation`, `status` and relevant domain identifiers).
