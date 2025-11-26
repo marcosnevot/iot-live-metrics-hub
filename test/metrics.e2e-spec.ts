@@ -5,12 +5,13 @@ import { Pool } from "pg";
 import { AppModule } from "../src/app.module";
 
 // Auth defaults for e2e
-process.env.JWT_SECRET = process.env.JWT_SECRET || "replace-with-local-jwt-secret";
+process.env.JWT_SECRET =
+  process.env.JWT_SECRET || "replace-with-local-jwt-secret";
 process.env.JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1h";
 process.env.ADMIN_USERNAME =
-  process.env.ADMIN_USERNAME || "replace-with-admin-password";
+  process.env.ADMIN_USERNAME || "admin@local.test";
 process.env.ADMIN_PASSWORD =
-  process.env.ADMIN_PASSWORD || "change-me-admin";
+  process.env.ADMIN_PASSWORD || "replace-with-admin-password";
 process.env.ANALYST_USERNAME =
   process.env.ANALYST_USERNAME || "analyst@local.test";
 process.env.ANALYST_PASSWORD =

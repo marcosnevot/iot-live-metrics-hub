@@ -16,6 +16,47 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
+    services:
+      db:
+        image: postgres:16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: admin
+        options: >-
+          --health-cmd="pg_isready -U postgres -d postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      mqtt:
+        image: eclipse-mosquitto:2
+        ports:
+          - 1883:1883
+
+    env:
+      # DB for app + e2e
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: admin
+      DB_NAME: postgres
+
+      # MQTT broker
+      MQTT_BROKER_URL: mqtt://127.0.0.1:1883
+
+      # JWT / users (aligned with .env.example)
+      JWT_SECRET: replace-with-local-jwt-secret
+      JWT_EXPIRES_IN: 1h
+      ADMIN_USERNAME: admin@local.test
+      ADMIN_PASSWORD: replace-with-admin-password
+      ANALYST_USERNAME: analyst@local.test
+      ANALYST_PASSWORD: replace-with-analyst-password
+
+      LOG_LEVEL: info
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,14 +67,46 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          for i in {1..30}; do
+            if pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER"; then
+              echo "PostgreSQL is ready"
+              exit 0
+            fi
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+          echo "PostgreSQL did not become ready in time"
+          exit 1
+
+      - name: Initialize test database schema
+        env:
+          PGPASSWORD: ${{ env.DB_PASSWORD }}
+        run: |
+          psql \
+            -h "$DB_HOST" \
+            -p "$DB_PORT" \
+            -U "$DB_USER" \
+            -d "$DB_NAME" \
+            -f infra/sql/init-test-db.sql
+
       - name: Install dependencies
         run: npm ci
 
       - name: Lint
         run: npm run lint
 
-      - name: Run tests
+      - name: Run unit tests
         run: npm test
+
+      - name: Run e2e tests
+        run: npm run test:e2e
 
       - name: Build
         run: npm run build

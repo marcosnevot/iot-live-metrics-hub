@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2025-11-26
+
+### Added
+
+- Hardening & QA (F10 – Technical quality pass):
+  - Basic rate limiting:
+    - Integrated `@nestjs/throttler` in `AppModule` with a global `ThrottlerGuard`.
+    - Global defaults configured via environment variables:
+      - `RATE_LIMIT_TTL_MS` – time window in milliseconds (default: 60000).
+      - `RATE_LIMIT_LIMIT` – max requests per IP in that window (default: 300).
+    - Endpoint-specific limits:
+      - `POST /auth/login` throttled with a stricter policy (5 requests per minute per IP) to mitigate brute-force attempts.
+      - `POST /ingest` throttled with a more permissive policy (120 requests per minute per IP) to guard against abuse while remaining compatible with expected ingest patterns.
+  - Additional automated tests:
+    - Strengthened unit tests around authentication (valid and invalid credentials, interaction with `JwtService`) and rule evaluation.
+    - Extended end-to-end coverage for the ingest, metrics, devices and alerts flows, reusing real devices, rules and alerts created via the HTTP APIs.
+
+### Changed
+
+- Environment & configuration:
+  - Normalised the use of authentication-related environment variables so that `.env.example` is the canonical template and `.env` is the only file developers need to edit for local runs.
+  - Updated unit and end-to-end tests to set default values for `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ANALYST_USERNAME`, `ANALYST_PASSWORD`, `JWT_SECRET` and `JWT_EXPIRES_IN` in a way that is consistent with `.env.example`, reducing surprises on fresh environments.
+  - Application bootstrap now relies on environment variables instead of hard-coded test credentials for authentication-related flows.
+
+- Tooling & CI:
+  - Cleaned up remaining ESLint/Prettier warnings (including CRLF-related noise) so that `npm run lint`, `npm test` and `npm run test:e2e` run cleanly in local development.
+  - Confirmed that the GitHub Actions workflow continues to run `npm run lint`, `npm test` and `npm run build` on pushes and pull requests targeting `main` and standard feature/bugfix/hotfix/chore branches.
+
+- Logging & controllers:
+  - Performed minor adjustments to structured logs emitted by authentication, ingest, devices and alerts controllers to keep a consistent event shape across modules (`module`, `operation`, `status` and relevant domain identifiers).
+
 ## [0.9.0] - 2025-11-25
 
 ### Added

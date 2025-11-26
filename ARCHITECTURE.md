@@ -89,7 +89,7 @@ future split into services if needed.
 - **DEC-08** – No local shell scripts; only standalone commands.
 - **DEC-09** – Strict alignment with the corporate Git/GitHub guide.
 
-## Implementation status (release 0.9.0 – F3 HTTP ingest + F4 MQTT ingest + F5 Time-Series Storage + F6 Rules Engine & Alerts + F7 Business APIs & Swagger + F8 Security + F9 Observability)
+## Implementation status (release 0.9.0 – F3 HTTP ingest + F4 MQTT ingest + F5 Time-Series Storage + F6 Rules Engine & Alerts + F7 Business APIs & Swagger + F8 Security + F9 Observability + F10 Hardening & QA)
 
 At this stage, the backend implements the following:
 
@@ -117,6 +117,9 @@ At this stage, the backend implements the following:
     - `JWT_EXPIRES_IN` – token lifetime (e.g. `1h`).
     - `ADMIN_USERNAME`, `ADMIN_PASSWORD` – credentials for the admin user.
     - `ANALYST_USERNAME`, `ANALYST_PASSWORD` – credentials for the analyst user.
+  - Environment variable loading:
+    - Configuration is loaded via `dotenv` from a local `.env` file at application bootstrap (see `main.ts`).
+    - `.env.example` provides documented local-development defaults; the real `.env` file is excluded from version control to comply with RNF-07 (no real credentials in the repository).
 
 ### Ingest module
 
@@ -510,10 +513,11 @@ Implemented HTTP endpoints at this stage:
     - Unit tests
     - E2E tests
     - Build.
+  - F10 – Hardening & QA consolidates this toolchain and enforces green CI (lint + unit + e2e) on every push to main and feature branches.
 
 - **Unit tests**:
   - `AppService` basic behavior.
-  - `IngestService` ingest pipeline behavior (normalization and delegation to storage).
+  - `IngestService` ingest pipeline behavior (normalization and delegation to storage), including error propagation.
   - `MqttIngestListener` covering:
     - Valid MQTT message (happy path).
     - Invalid JSON payload.
@@ -525,10 +529,14 @@ Implemented HTTP endpoints at this stage:
       - `MIN` rules (less than threshold).
       - `RANGE` rules (outside `[min, max]`).
       - Null/undefined threshold edge cases.
+  - `AuthService`:
+    - Successful login with valid admin credentials.
+    - Successful login with valid analyst credentials.
+    - Invalid credentials (wrong username, wrong password, mismatched username/password) returning `UnauthorizedException`.
 
 - **End-to-end tests**:
   - `POST /ingest`:
-    - Happy path (valid payload, authenticated) → `200 OK` with `{ "status": "ok", "stored": N }`.
+    - Happy path (valid payload, authenticated with a real device API key) → `201 Created` with `{ "status": "ok", "stored": N }`.
     - Missing API key → `401`.
     - Invalid payload (e.g. empty `metrics`) → `400`.
   - `GET /metrics/:deviceId/:metricName`:
@@ -536,14 +544,16 @@ Implemented HTTP endpoints at this stage:
     - Empty result when the range does not contain data.
     - Validation errors for missing or inconsistent `from` / `to`.
   - Full ingest + rules + alerts pipeline:
-    - `POST /rules` creates a `MAX` rule for a device/metric.
-    - `POST /ingest` sends a metric that violates that rule.
-    - `GET /alerts?status=ACTIVE` returns at least one alert matching the device, metric and value.
+    - `POST /auth/login` obtains an admin JWT from environment-configured credentials.
+    - `POST /devices` (admin JWT) creates a device and returns its raw `api_key`.
+    - `POST /rules` (admin JWT) creates a `MAX` rule for the device/metric.
+    - `POST /ingest` (device API key) sends a metric that violates that rule.
+    - `GET /alerts?status=ACTIVE` (admin JWT) returns at least one alert matching device, metric and value.
 
 ---
 
-Future phases will extend this document with:
+Future phases/releases will extend this document with:
 
 - More detailed performance considerations and SLOs based on the existing Prometheus metrics.
-- Hardening and QA improvements: extended test coverage, rate limiting, additional validation (F10).
+- Optional advanced hardening (e.g. rate limiting for ingest/auth and additional validation) beyond the v1.0.0 scope.
 - Final documentation polish, README for portfolio and release notes for v1.0.0 (F11).
